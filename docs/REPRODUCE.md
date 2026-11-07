@@ -8,7 +8,7 @@
 
 ## 1. 拉取代码并选择环境路线
 
-代码位于 [juchuanqi/graspgen-curobo-collect](https://github.com/juchuanqi/graspgen-curobo-collect/tree/beijing-d-collect) 的 `beijing-d-collect` 分支。取得仓库访问权限后：
+代码位于 [juchuanqi/graspgen-curobo-collect](https://github.com/juchuanqi/graspgen-curobo-collect/tree/beijing-d-collect) 的 `beijing-d-collect` 分支。直接克隆：
 
 ```bash
 git clone --branch beijing-d-collect --single-branch \
@@ -17,7 +17,7 @@ cd graspgen-curobo-collect
 git rev-parse HEAD
 ```
 
-记录提交号，便于后续对齐版本。私有仓库需要被授予访问权限。
+仓库已公开，可直接浏览和克隆，无需额外授权。记录提交号，便于后续对齐版本。
 GraspGen 源码、Panda 模型与四种物体资产已包含在代码内，无需额外初始化 Git submodule。
 模型权重、Python 环境、历史轨迹、日志和旧候选池不包含在仓库。
 
@@ -193,7 +193,7 @@ outputs/<run>/
 | 首回合初态核查失败 | 停止扩大批次，保留 INITIAL_STATE_AUDIT、RESET_READBACK、ENTRY 和 worker 日志定位 |
 | 已有输出目录报错 | 使用新输出路径，避免覆盖旧数据 |
 | 远程服务器无法显示 GUI | 使用默认 headless；GUI 需要可用显示服务，且只支持单 worker |
-| GitHub 404 或 clone 拒绝访问 | 确认仓库已发布且登录账号被授予私有仓库权限 |
+| GitHub 404 或 clone 拒绝访问 | 核对仓库 URL、分支名及本机 GitHub 网络连接；此仓库已公开，无需单独授权 |
 
 ## 8. 软件版本与验证边界
 
