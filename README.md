@@ -4,6 +4,14 @@
 同事首次使用请按 [复现手册](docs/REPRODUCE.md) 操作：包含北京 D 共享环境、新机器安装入口、两条验收、120 次采集及故障排查。
 本项目范围是抓取数据采集、质量验收和数据交付。
 
+GitHub：[juchuanqi/graspgen-curobo-collect](https://github.com/juchuanqi/graspgen-curobo-collect/tree/beijing-d-collect)，分支 `beijing-d-collect`。
+
+```bash
+git clone --branch beijing-d-collect --single-branch \
+  https://github.com/juchuanqi/graspgen-curobo-collect.git
+cd graspgen-curobo-collect
+```
+
 独立的 Panda 抓取数据采集代码，沿用当前仿真直接状态与 mesh 流程：
 
 `物体 mesh → 2048 点云 → GraspGen 生成及评分 → 几何筛选 → cuRobo 规划 → Isaac Lab / PhysX 实执行 → 接触与抬升保持评分 → 保存和校验`

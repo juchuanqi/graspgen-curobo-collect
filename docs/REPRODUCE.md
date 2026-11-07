@@ -8,7 +8,7 @@
 
 ## 1. 拉取代码并选择环境路线
 
-发布目标为 `juchuanqi/graspgen-curobo-collect` 的 `beijing-d-collect` 分支。仓库上传完成并取得访问权限后：
+代码位于 [juchuanqi/graspgen-curobo-collect](https://github.com/juchuanqi/graspgen-curobo-collect/tree/beijing-d-collect) 的 `beijing-d-collect` 分支。取得仓库访问权限后：
 
 ```bash
 git clone --branch beijing-d-collect --single-branch \
