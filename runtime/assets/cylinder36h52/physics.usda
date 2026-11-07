@@ -1,0 +1,31 @@
+#usda 1.0
+(defaultPrim = "Object"; metersPerUnit = 1; upAxis = "Z")
+def Xform "Object" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysxRigidBodyAPI"]) {
+ bool physics:rigidBodyEnabled = true
+ bool physics:kinematicEnabled = false
+ float physics:density = 500.0
+ float physics:mass = 0.0264647765138
+ bool physxRigidBody:disableGravity = false
+ int physxRigidBody:solverPositionIterationCount = 8
+ int physxRigidBody:solverVelocityIterationCount = 4
+ float physxRigidBody:maxDepenetrationVelocity = 1
+ def Scope "Looks" {
+  def Material "Physics" (prepend apiSchemas = ["PhysicsMaterialAPI"]) {
+   float physics:staticFriction = 0.8
+   float physics:dynamicFriction = 0.7
+   float physics:restitution = 0
+  }
+ }
+ def Cylinder "body" (prepend apiSchemas = ["PhysicsCollisionAPI", "PhysxCollisionAPI", "MaterialBindingAPI"]) {
+  double3 xformOp:translate = (0, 0, 0)
+  uniform token axis = "Z"
+  double radius = 0.018
+  double height = 0.052
+  uniform token[] xformOpOrder = ["xformOp:translate"]
+  bool physics:collisionEnabled = true
+  float physxCollision:contactOffset = 0.001
+  float physxCollision:restOffset = 0
+  color3f[] primvars:displayColor = [(0.82, 0.28, 0.12)]
+  rel material:binding:physics = </Object/Looks/Physics>
+ }
+}

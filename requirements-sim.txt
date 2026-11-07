@@ -1,0 +1,4 @@
+# Install Isaac Sim/Lab first, then these CPU helpers. Do not replace Isaac's torch.
+numpy==1.26.0
+scipy==1.15.3
+trimesh==4.5.1

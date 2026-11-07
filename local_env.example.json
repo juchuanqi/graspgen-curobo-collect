@@ -1,0 +1,6 @@
+{
+  "SIM_PYTHON": "/your/isaaclab/env/bin/python",
+  "PLANNER_PYTHON": "/your/curobo/env/bin/python",
+  "GRASPGEN_PYTHON": "/your/graspgen/env/bin/python",
+  "GRASPGEN_CONFIG": "/your/models/checkpoints/graspgen_franka_panda.yml"
+}

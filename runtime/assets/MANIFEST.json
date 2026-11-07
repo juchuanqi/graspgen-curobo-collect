@@ -1,0 +1,225 @@
+{
+  "status": "asset_definitions",
+  "units": "meters",
+  "objects": {
+    "block55": {
+      "object_id": "block55",
+      "label_zh": "长方体",
+      "parts": [
+        {
+          "name": "body",
+          "shape": "box",
+          "size": [
+            0.055,
+            0.038,
+            0.032
+          ],
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "density_kg_m3": 500.0,
+      "candidate_cache_seed": 2026180000,
+      "mass_kg": 0.03344,
+      "mass_policy": "sum native primitive volumes*density; overlap retained, matching inherited compound-asset policy",
+      "usd_path": "assets/block55/physics.usda",
+      "mesh_path": "assets/block55/surface.obj",
+      "surface_path": "assets/block55/surface.npz",
+      "bounds_min": [
+        -0.0275,
+        -0.019,
+        -0.016
+      ],
+      "bounds_max": [
+        0.0275,
+        0.019,
+        0.016
+      ],
+      "size_m": [
+        0.055,
+        0.038,
+        0.032
+      ],
+      "bottom_local_z_m": -0.016,
+      "static_friction": 0.8,
+      "dynamic_friction": 0.7,
+      "contact_offset_m": 0.001,
+      "rest_offset_m": 0.0,
+      "surface_count": 65536,
+      "cylinder_mesh_sections": 256,
+      "cylinder_mesh_radial_error_m": 0.0,
+      "hashes": {
+        "physics.usda": "dcee47bfb30c3890e976b8dfd39159b81bc1e75eab51f81260962cdcd296dfe1",
+        "surface.obj": "812a9b7bff21581389c331913cba27d803c8c8c14cf475452bba3747b50e2124",
+        "surface.npz": "f60716b9bf3ba283f91cda974a397ae44a3e1ceadfa3f4ba5a6ca720f74275b9"
+      },
+      "mesh_generation": "exact exposed primitive union boundary; no convex-hull fill"
+    },
+    "slender95": {
+      "object_id": "slender95",
+      "label_zh": "细长条",
+      "parts": [
+        {
+          "name": "body",
+          "shape": "box",
+          "size": [
+            0.095,
+            0.026,
+            0.028
+          ],
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "density_kg_m3": 500.0,
+      "candidate_cache_seed": 2026180001,
+      "mass_kg": 0.03458,
+      "mass_policy": "sum native primitive volumes*density; overlap retained, matching inherited compound-asset policy",
+      "usd_path": "assets/slender95/physics.usda",
+      "mesh_path": "assets/slender95/surface.obj",
+      "surface_path": "assets/slender95/surface.npz",
+      "bounds_min": [
+        -0.0475,
+        -0.013,
+        -0.014
+      ],
+      "bounds_max": [
+        0.0475,
+        0.013,
+        0.014
+      ],
+      "size_m": [
+        0.095,
+        0.026,
+        0.028
+      ],
+      "bottom_local_z_m": -0.014,
+      "static_friction": 0.8,
+      "dynamic_friction": 0.7,
+      "contact_offset_m": 0.001,
+      "rest_offset_m": 0.0,
+      "surface_count": 65536,
+      "cylinder_mesh_sections": 256,
+      "cylinder_mesh_radial_error_m": 0.0,
+      "hashes": {
+        "physics.usda": "975c96cddb8ac18cf4644c594e9eb95c890146d323db5ed06e426cd508a4f7b1",
+        "surface.obj": "e04b2b1acf25f66d39c9f96ef1fce9f462959af0220039db745ca9d0c54e8d6e",
+        "surface.npz": "1fe5124f7f59c7df33216c23ca8ee2f915181c03631b8a65a0246da0ea53ef51"
+      },
+      "mesh_generation": "exact exposed primitive union boundary; no convex-hull fill"
+    },
+    "cylinder36h52": {
+      "object_id": "cylinder36h52",
+      "label_zh": "细圆柱",
+      "parts": [
+        {
+          "name": "body",
+          "shape": "cylinder",
+          "radius": 0.018,
+          "length": 0.052,
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "density_kg_m3": 500.0,
+      "candidate_cache_seed": 2026180002,
+      "mass_kg": 0.026464776513840414,
+      "mass_policy": "sum native primitive volumes*density; overlap retained, matching inherited compound-asset policy",
+      "usd_path": "assets/cylinder36h52/physics.usda",
+      "mesh_path": "assets/cylinder36h52/surface.obj",
+      "surface_path": "assets/cylinder36h52/surface.npz",
+      "bounds_min": [
+        -0.018,
+        -0.018,
+        -0.026
+      ],
+      "bounds_max": [
+        0.018,
+        0.018,
+        0.026
+      ],
+      "size_m": [
+        0.036,
+        0.036,
+        0.052
+      ],
+      "bottom_local_z_m": -0.026,
+      "static_friction": 0.8,
+      "dynamic_friction": 0.7,
+      "contact_offset_m": 0.001,
+      "rest_offset_m": 0.0,
+      "surface_count": 65536,
+      "cylinder_mesh_sections": 256,
+      "cylinder_mesh_radial_error_m": 1.355366895398946e-06,
+      "hashes": {
+        "physics.usda": "daa7fcd40494843f68707624e91a4688bcfda1365491693de41f4c5e3915ae4b",
+        "surface.obj": "021c34524f8b2b559a0e644e62b4f6ea0e56f2a9379c1e34244f8f582fd4497f",
+        "surface.npz": "f4257d56c702739cfadb46c5db18bc9946018b15a4003d327b3397d9cc82bcd3"
+      },
+      "mesh_generation": "exact exposed primitive union boundary; no convex-hull fill"
+    },
+    "disk56h24": {
+      "object_id": "disk56h24",
+      "label_zh": "圆盘",
+      "parts": [
+        {
+          "name": "body",
+          "shape": "cylinder",
+          "radius": 0.028,
+          "length": 0.024,
+          "position": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "density_kg_m3": 500.0,
+      "candidate_cache_seed": 2026180003,
+      "mass_kg": 0.029556103684972777,
+      "mass_policy": "sum native primitive volumes*density; overlap retained, matching inherited compound-asset policy",
+      "usd_path": "assets/disk56h24/physics.usda",
+      "mesh_path": "assets/disk56h24/surface.obj",
+      "surface_path": "assets/disk56h24/surface.npz",
+      "bounds_min": [
+        -0.028,
+        -0.028,
+        -0.012
+      ],
+      "bounds_max": [
+        0.028,
+        0.028,
+        0.012
+      ],
+      "size_m": [
+        0.056,
+        0.056,
+        0.024
+      ],
+      "bottom_local_z_m": -0.012,
+      "static_friction": 0.8,
+      "dynamic_friction": 0.7,
+      "contact_offset_m": 0.001,
+      "rest_offset_m": 0.0,
+      "surface_count": 65536,
+      "cylinder_mesh_sections": 256,
+      "cylinder_mesh_radial_error_m": 2.1083485039539163e-06,
+      "hashes": {
+        "physics.usda": "63e867e4f1f5a62e301e0cba155906c029d9ac5e698dec16c89af25a8a667e6c",
+        "surface.obj": "1a41ed1ab494530838d76cadff4f786a12f5388f93d18c2bcdc908c423fdc069",
+        "surface.npz": "7da76fa623ac6de1a9bc8e7c0abed6eb3e71dd27385ba693944abff48d764159"
+      },
+      "mesh_generation": "exact exposed primitive union boundary; no convex-hull fill"
+    }
+  },
+  "object_frame": "native local asset frame without recentering"
+}
