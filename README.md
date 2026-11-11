@@ -86,7 +86,18 @@ bash run.sh collect --objects all --episodes-per-object 30 --workers 3 --gpus 0,
 - `cameras/base_camera.npy` 和 `cameras/wrist_camera.npy`：原始 RGB，N 个动作对应 N+1 个观测。
 - 规划、初态、原始力校验、代码快照与本次运行日志，均位于这次输出目录。
 
-模型下载写入 `models/`，新 GraspGen 候选写入 `generated/candidates/`，可配置缓存写入 `.cache/`。上述目录全部忽略版本管理及源码打包。原始数据格式与当前采集包一致，采集阶段不自动转换 LeRobot。约 825 控制步的双相机 RGB 每条约 0.32 GB，另有接触与状态数据；保存 120 次时可按 120 GB 预留空间以覆盖控制步上限。
+模型下载写入 `models/`，新 GraspGen 候选写入 `generated/candidates/`，可配置缓存写入 `.cache/`。上述目录全部忽略版本管理及源码打包。约 825 控制步的双相机 RGB 每条约 0.32 GB，另有接触与状态数据；保存 120 次时可按 120 GB 预留原始采集空间以覆盖控制步上限。
+
+## 导出 VLA 训练数据
+
+采集校验完成后，在独立的 LeRobot 0.4.4 环境里离线导出：
+
+```bash
+bash run.sh export --run outputs/原始采集目录 --output outputs/新导出目录 \
+  --python /你的/lerobot-venv/bin/python
+```
+
+命令会筛选通过抓取、初态和数据校验的回合，写入 LeRobot v3，并用官方加载器逐行读回核对。见[导出和数据约定](docs/LEROBOT.md)。
 
 ## 原测速模式与工具
 

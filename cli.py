@@ -52,8 +52,12 @@ sys.exit(bool(missing) or bool(missing_files) or bool(import_error))
 
 def main():
     values = sys.argv[1:]
-    command = values.pop(0) if values and values[0] in {"collect", "prepare", "check", "benchmark", "download-models"} else "collect"
+    commands = {"collect", "prepare", "check", "benchmark", "download-models", "export"}
+    command = values.pop(0) if values and values[0] in commands else "collect"
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    if command == "export":
+        script = HERE / "tools/lerobot_export/run.py"
+        os.execve(sys.executable, [sys.executable, "-B", str(script), *values], env)
     if command in {"prepare", "download-models"}:
         env = environment(os.environ.get("CUDA_VISIBLE_DEVICES", ""), HERE)
         if "CUDA_VISIBLE_DEVICES" not in os.environ:
