@@ -155,7 +155,7 @@ class PortabilityTests(unittest.TestCase):
                 "job=json.loads(Path(a.job).read_text());out=Path(a.output);out.mkdir(parents=True)\n"
                 "(out/'seen.json').write_text(json.dumps(dict(job=job,args=unknown)))\n")
             args = SimpleNamespace(output=output, runtime=ROOT / "runtime", candidate_root=root / "new candidates",
-                                   startup_timeout=10, episode_timeout=10, gui=True)
+                                   startup_timeout=10, episode_timeout=10, gui=True, grasp_symmetry="near-first")
             stage = collection_plan(["block55"], 2)["stages"][0]
             processes = Processes()
             try:
@@ -165,6 +165,7 @@ class PortabilityTests(unittest.TestCase):
                 worker = Path(receipt["jobs"][0]["output"])
                 seen = read(worker / "seen.json")
                 self.assertEqual(seen["job"]["candidate_root"], str(args.candidate_root))
+                self.assertEqual(seen["job"]["grasp_symmetry"], "near-first")
                 self.assertNotIn("--headless", seen["args"])
                 self.assertEqual(receipt["status"], "completed")
             finally:

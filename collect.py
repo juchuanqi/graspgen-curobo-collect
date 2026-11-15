@@ -15,6 +15,7 @@ import time
 import traceback
 
 from common import HERE, OBJECTS, collection_plan, gpu_tokens, local_setting, make_plan, read, sha, write
+from runtime.collector import arm_speed, grasp_symmetry
 
 
 def interpreter(explicit, variable, fallback=None):
@@ -173,7 +174,8 @@ def run_stage(stage, args, tokens, sim_python, planner_python, processes):
                 worker_id = f"{workload[0]['object_id']}_wave{wave_number:02d}_lane{lane}"
                 job = dict(stage=stage["name"], worker_id=worker_id,
                            persistent=stage["persistent"], cases=workload,
-                           candidate_root=str(args.candidate_root))
+                           candidate_root=str(args.candidate_root),
+                           grasp_symmetry=getattr(args,"grasp_symmetry","off"))
                 path = out / "jobs" / (worker_id + ".json")
                 write(path, job)
                 worker_output = out / "workers" / worker_id
@@ -245,6 +247,10 @@ def main():
     parser.add_argument("--episodes-per-object", type=int, default=2)
     parser.add_argument("--workers", type=int, default=1, help="Persistent simulation processes (1 to 3)")
     parser.add_argument("--seed", type=int, default=2026207000)
+    parser.add_argument("--arm-speed-profile", choices=("baseline", "recommended"),
+                        help="Joint timing: baseline (default), or approach 1.0 / carry 0.3 rad/s")
+    parser.add_argument("--grasp-symmetry", choices=grasp_symmetry.MODES, default="off",
+                        help="near-first: pair each TCP pose with its local-Z 180-degree flip; prefer the closer orientation")
     parser.add_argument("--gui", action="store_true", help="Show Isaac Sim window (one worker)")
     parser.add_argument("--candidate-root", type=Path, default=HERE / "generated/candidates")
     parser.add_argument("--benchmark", action="store_true", help="Run original cold/warm/parallel timing comparison")
@@ -261,6 +267,11 @@ def main():
     parser.add_argument("--episode-timeout", type=float, default=1200.)
     parser.add_argument("--skip-validation", action="store_true")
     args = parser.parse_args()
+    try:
+        speed = arm_speed.parse(args.arm_speed_profile) if args.arm_speed_profile else arm_speed.from_environment()
+    except ValueError as error:
+        parser.error(str(error))
+    os.environ["ARM_SPEED_PROFILE"] = speed.environment_value()
     if args.episode_timeout <= 0 or args.startup_timeout <= 0:
         parser.error("Timeouts must be positive")
     if args.smoke and (args.full or args.only):
@@ -287,6 +298,13 @@ def main():
             parser.error("--gui requires one worker")
     except ValueError as error:
         parser.error(str(error))
+    plan["arm_speed_profile"] = speed.describe()
+    plan["grasp_symmetry"] = args.grasp_symmetry
+    plan["symmetry_candidate_budget"] = dict(
+        derived_orientations_per_source=2 if args.grasp_symmetry=="near-first" else 1,
+        scene_qualified_per_group=50,
+        scene_qualified_total=100 if args.grasp_symmetry=="near-first" else 50,
+        full_planned_total=5, planning_wall_s_per_candidate=30)
     if args.dry_run:
         print(json.dumps(plan, ensure_ascii=False, indent=2))
         return
@@ -307,6 +325,8 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     write(args.output / "PLAN.json", plan)
     write(args.output / "ENVIRONMENT.json", dict(checks=checks, gpu_tokens=tokens,
+          arm_speed_profile=speed.describe(),
+          grasp_symmetry=args.grasp_symmetry,
           inherited_cuda_visible_devices=os.environ.get("CUDA_VISIBLE_DEVICES"),
           bundle_sha256={p.name: sha(p) for p in HERE.glob("*.py")}))
     print(f"Output: {args.output}\nFixed attempt slots: {plan['total_attempt_slots']}; "

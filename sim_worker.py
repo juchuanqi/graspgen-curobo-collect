@@ -19,7 +19,8 @@ def episode_options(runtime, output, job, index):
         output=output, candidate_root=Path(job["candidate_root"]), role="collection",
         method="graspgen", qualify_only=False, io_mode="optimized",
         audit_io=False, full_settle=False, cold_planner=not job["persistent"],
-        reused_env=index > 0, stage=job["stage"], worker_id=job["worker_id"])
+        reused_env=index > 0, stage=job["stage"], worker_id=job["worker_id"],
+        grasp_symmetry=job.get("grasp_symmetry","off"))
 
 
 def main():
@@ -63,7 +64,7 @@ def main():
             raise ValueError("Requested PGS does not match native USD solver")
         native = dict(solver_scenes=solvers, contact_force_bound=env.contact_force_bound)
         for field, getter in (("mass_kg", "get_masses"), ("inertias", "get_inertias"),
-                              ("materials", "get_material_properties")):
+                              ("materials", "get_material_properties"), ("coms_actor_local_pose_xyzw", "get_coms")):
             values = getattr(env.object.root_physx_view, getter)()
             native[field] = values.cpu().numpy().tolist() if hasattr(values, "cpu") else np.asarray(values).tolist()
         initialization_s = time.monotonic() - entered
@@ -82,7 +83,10 @@ def main():
             return [*xyzw[:3], xyzw[6], *xyzw[3:6]]
 
         casegrid = dict(candidate_budget=dict(
-            raw_model_candidates_per_object=200, scene_qualified_candidates=50,
+            raw_model_candidates_per_object=200,
+            scene_qualified_candidates=100 if job.get("grasp_symmetry")=="near-first" else 50,
+            grasp_symmetry=job.get("grasp_symmetry","off"),
+            scene_qualified_candidates_per_orientation_group=50,
             max_full_planned_candidates_per_scene=5,
             max_planning_wall_s_per_candidate_including_retries=30,
             max_control_steps_per_sequence=2400, max_physical_attempts_per_scene_method=1))

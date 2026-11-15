@@ -1,6 +1,6 @@
 """Collection integration of the calibrated pose-motion score and legacy telemetry.
 
-The primary score is pose_arc_per_control_v2. No threshold is object-specific.
+The primary score is com_translation_pose_arc_v3. No threshold is object-specific.
 Legacy success is measured on the same collected prefix, never used to stop it.
 """
 from collections import Counter
@@ -8,7 +8,7 @@ from collections import Counter
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from pose_motion_score import PoseMotionScore, PROTOCOL, VERSION, legacy
+from linear_motion_score import LinearMotionScore, PROTOCOL, VERSION, legacy
 
 matrix, pose, sanitize = legacy.matrix, legacy.pose, legacy.sanitize
 
@@ -23,8 +23,8 @@ HOLD_BLOCKERS = (
 
 
 class CollectionScore:
-    def __init__(self, initial_row, task='pick_up_any_stable_region'):
-        self.primary = PoseMotionScore(initial_row, task)
+    def __init__(self, initial_row, task='pick_up_any_stable_region', com_local_m=None):
+        self.primary = LinearMotionScore(initial_row, com_local_m, task)
         self.legacy = legacy.PhysicalScore(initial_row['object_pose'], task)
         self.blocker_counts = Counter()
         self.legacy_angular_exceedances = 0
@@ -50,6 +50,10 @@ class CollectionScore:
     def _augment(self, row, derived, hold_enabled, initial=False):
         # Identical keys on reset and every step are required by NPZ stacking.
         d = {
+            'pose_interval_linear_speed_m_s': 0.,
+            'pose_substep_peak_linear_speed_m_s': 0.,
+            'com_path_m': 0.,
+            'com_endpoint_w': matrix(row['object_pose'])[:3, :3] @ self.primary.com_local_m + row['object_pose'][:3],
             'pose_interval_angular_speed_rad_s': 0.,
             'pose_substep_peak_angular_speed_rad_s': 0.,
             'motion_measurement_valid': False,
@@ -60,6 +64,7 @@ class CollectionScore:
         }
         d.update(
             motion_interval_available=not initial,
+            native_linear_speed_m_s=float(np.linalg.norm(row['object_linear_velocity'])),
             native_angular_speed_rad_s=float(np.linalg.norm(row['object_angular_velocity'])),
             hold_enabled=bool(hold_enabled),
             hold_blocker_mask=np.uint16(sum(1 << HOLD_BLOCKERS.index(k) for k in self.last_blockers)),
@@ -80,6 +85,8 @@ class CollectionScore:
         if self.legacy.reason is None:
             self.legacy.update(row, hold_enabled=hold_enabled)
         d = self.primary.update(row, hold_enabled=hold_enabled)
+        if 'lift_m' not in d:
+            d = {**self.primary.derive(row), **d}
         p = PROTOCOL
         lower, upper = p['opening_range_m']
         if len(self.primary.window) == p['hold_steps']:
@@ -96,7 +103,7 @@ class CollectionScore:
             not (d['pad_force_each_n'] >= p['pad_force_each_n']).all(),
             not lower <= d['opening_m'] <= upper,
             row['object_table_peak_n'] > p['max_table_force_n'],
-            np.linalg.norm(row['object_linear_velocity']) > p['max_linear_speed_m_s'],
+            d.get('pose_interval_linear_speed_m_s', float('inf')) > p['max_linear_speed_m_s'],
             d.get('pose_interval_angular_speed_rad_s', float('inf')) > p['max_angular_speed_rad_s'],
             self.primary.task == 'pick_up_outer_handle_bar' and not d['outer_handle_contact'],
             self.reason is not None and not self.success,
@@ -132,4 +139,5 @@ class CollectionScore:
             'hold_blocker_mask_bits': list(HOLD_BLOCKERS),
             'legacy_contract': legacy.PROTOCOL,
             'primary_contract': PROTOCOL,
+            'actor_local_com_m': self.primary.com_local_m.tolist(),
         }

@@ -9,6 +9,11 @@ from collection_score import CollectionScore, PROTOCOL, matrix, sanitize
 from io_audit import LiveIOAudit
 from geometry.api import check_robot_path
 from target_provider import load_candidate_source
+import arm_speed
+import grasp_symmetry
+import static_state
+
+SPEED_PROFILE = arm_speed.from_environment()
 
 def create_episode(env, entry, asset, args, casegrid, planner, process_started, loaded_source_hashes, initialization_s):
 
@@ -40,6 +45,7 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
     class Episode:
 
         def __init__(self):
+            self.grasp_symmetry = grasp_symmetry.mode(getattr(args,'grasp_symmetry','off'))
             self.row = None
             self.reason = None
             self.success = False
@@ -67,6 +73,8 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
 
         def plan(self, command, **kwargs):
             request = dict(command=command, scene=self.scene(), seed=int(entry['scene_seed']), out=str(args.output / 'planning' / command), **kwargs)
+            request['scene']['arm_speed_profile'] = SPEED_PROFILE.describe()
+            request['scene']['grasp_symmetry'] = self.grasp_symmetry
             write(args.output / f'{command}_request.json', request)
             self.status('planning_' + command)
             started = time.monotonic()
@@ -77,6 +85,7 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
             return reply
 
         def record(self, row, images, initial=False):
+            row = {**row, 'sim_time': np.float64(len(self.actions) / 60.0)}
             d = self.score.derive(row) if initial else self.score.update(row, hold_enabled=self.lift_enabled)
             clean = sanitize({**row, **d, 'sim_time': np.float64(len(self.actions) / 60.0)})
             self.rows.append(clean)
@@ -101,7 +110,7 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
             if action.shape != (9,) or not np.isfinite(action).all():
                 self.reason = 'invalid_action'
                 return False
-            if np.max(np.abs(action[:7] - self.row['position_targets'][:7])) > 0.002501:
+            if np.max(np.abs(action[:7] - self.row['position_targets'][:7])) > SPEED_PROFILE.step_limit(self.phase):
                 self.reason = 'joint_target_delta_exceeded'
                 return False
             t = time.monotonic()
@@ -144,19 +153,37 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
             t_settle = time.monotonic()
             self.settle_protocol = env.settle(minimal=not args.full_settle) if args.io_mode == 'optimized' else None
             if args.io_mode == 'baseline':
-                for _ in range(120):
+                env.initial_static_rows = []
+                for index in range(120):
                     env.step(env.targets.clone())
+                    if index >= 89:
+                        observation, _ = env.snapshot(capture_rgb=False)
+                        env.initial_static_rows.append({key: np.array(observation[key], copy=True) for key in (
+                            'object_pose', 'contact_substep_object_pose_w', 'contact_substep_physics_tick',
+                            'contact_substep_sample_count', 'link_contact_peak_n')})
             self.timing['settle_controls'] = time.monotonic() - t_settle
             self.row, images = env.snapshot()
-            self.score = CollectionScore(self.row, entry['task'])
+            self.row['sim_time'] = np.float64(0.)
+            native_com = env.object.root_physx_view.get_coms()[0].cpu().numpy()
+            self.com_local_m = np.asarray(native_com[:3], dtype=float)
+            if self.com_local_m.shape != (3,) or not np.isfinite(self.com_local_m).all():
+                raise RuntimeError('Native actor-local COM readback is invalid')
+            self.score = CollectionScore(self.row, entry['task'], com_local_m=self.com_local_m)
+            static_data = {key: np.stack([row[key] for row in env.initial_static_rows])
+                           for key in env.initial_static_rows[0]}
+            np.savez_compressed(args.output / 'INITIAL_STATIC_TRACE.npz', **static_data)
+            self.static_audit = static_state.evaluate(static_data, asset['bounds_min'], asset['bounds_max'])
+            write(args.output / 'INITIAL_STATIC_AUDIT.json', self.static_audit)
             self.streams = {name: CameraStream(args.output / 'cameras' / f'{name}.npy') for name in images}
             self.record(self.row, images, initial=True)
+            if self.static_audit['status'] != 'passed':
+                self.reason = 'initial_object_not_static'
             self.timing['reset_settle'] = time.monotonic() - t
             initial = check_robot_path(self.row['qpos'], self.row['qpos'][7:].sum(), matrix(self.row['object_pose']), entry['object_id'], base_pose=matrix(env.robot.data.root_link_pose_w[0].cpu().numpy()))
             write(args.output / 'INITIAL_GEOMETRY.json', initial)
-            if not initial['valid']:
+            if not initial['valid'] and self.reason is None:
                 self.reason = 'invalid_initial_geometry'
-            if not np.isfinite(self.row['qpos']).all():
+            if not np.isfinite(self.row['qpos']).all() and self.reason is None:
                 self.reason = 'nonfinite_initial_state'
             write(args.output / 'SCENE.json', self.scene())
 
@@ -273,6 +300,10 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
             metadata = {'case_id': entry['case_id'], 'object_id': entry['object_id'], 'scene_seed': int(entry['scene_seed']), 'method': args.method, 'role': args.role, 'io_mode': args.io_mode, 'task': entry['task'], 'accepted': bool(self.success), 'success': bool(self.success), 'reason': self.reason, 'terminal_reason': self.reason, 'physical_attempts': int(not args.qualify_only and self.selected is not None), 'actions': len(self.actions), 'observations': len(self.rows), 'control_hz': 60, 'physics_hz': 480, 'sim_seconds': len(self.actions) / 60.0, 'camera_names': list(env.cameras), 'joint_names': NAMES, 'contact_links': LINKS, 'success_contract': PROTOCOL, 'best_stable_window': self.score.best_window if self.score else 0, 'score_diagnostics': self.score.report(self.reason) if self.score else None, 'ever_bilateral_pad_contact': self.ever_bilateral, 'selected_candidate': self.selected, 'candidate_budget': casegrid['candidate_budget'], 'timing_s': self.timing, 'episode_wall_s': time.monotonic() - self.started, 'control_timing_columns': ['env_step', 'snapshot', 'record', 'total'], 'process_wall_s': time.monotonic() - process_started, 'error': error, 'settle_protocol': getattr(self, 'settle_protocol', None), 'source_sha256': loaded_source_hashes, 'asset': asset, 'training_format': '8D after official export: 7 absolute arm q targets + total opening; raw 9D joints retained', 'terminal_observation': 'N actions paired with observations[0:N], terminal at N', 'human_preview': False}
             if self.rows:
                 metadata.update(max_lift_m=float(max((float(r['lift_m']) for r in self.rows))), maximum_forbidden_force_n=float(max((float(r['forbidden_force_n']) for r in self.rows))), final_pad_force_n=self.row['pad_object_force_n'].tolist(), final_object_table_force_n=float(self.row['object_table_peak_n']))
+            metadata['arm_speed_profile'] = SPEED_PROFILE.describe()
+            metadata['grasp_symmetry'] = self.grasp_symmetry
+            metadata['actor_local_com_m'] = self.com_local_m.tolist() if hasattr(self, 'com_local_m') else None
+            metadata['initial_static_audit'] = getattr(self, 'static_audit', None)
             metadata['io_audit_wall_s'] = self.io_audit_wall_s
             if self.io_audit is not None:
                 write(args.output / 'LIVE_IO_AUDIT.json', self.io_audit.report())

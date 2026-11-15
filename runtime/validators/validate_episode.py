@@ -1,6 +1,6 @@
 """CPU-only chronology, sensor, camera and exact collection-score replay check.
 
-Default validation is for newly collected v2 episodes. --replay-only may inspect
+Default validation is for newly collected episodes. --replay-only may inspect
 old recordings, but explicitly cannot qualify formal results. No labels change.
 """
 from __future__ import annotations
@@ -15,7 +15,10 @@ import sys
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / 'collector'))
+from arm_speed import validate_action_deltas
 RAW_KEYS = (
+    'sim_time',
     'qpos', 'qvel', 'position_targets', 'object_pose', 'tcp_pose',
     'object_linear_velocity', 'object_angular_velocity', 'link_contact_force',
     'link_contact_peak_n', 'object_table_peak_n', 'object_wall_peak_n',
@@ -41,8 +44,10 @@ def sha(path):
 
 def scoring_from(source):
     # Import only CPU scoring modules, never the Isaac collector bootstrap.
-    for name in ('pose_motion_score', 'collection_score'):
+    for name in ('pose_motion_score', 'linear_motion_score', 'collection_score'):
         path = source / (name + '.py')
+        if name == 'linear_motion_score' and not path.is_file():
+            continue
         spec = importlib.util.spec_from_file_location(name, path)
         module = importlib.util.module_from_spec(spec)
         sys.modules[name] = module
@@ -118,7 +123,7 @@ def validate(directory, collector=None, replay_only=False):
     assert endpoint_error.max() <= 1e-5
     if n:
         assert np.allclose(actions, data['position_targets'][1:], rtol=0, atol=1e-6), 'Action/next target alignment'
-        assert np.max(np.abs(actions[:, :7] - data['position_targets'][:-1, :7])) <= .0025011
+        validate_action_deltas(actions, data['position_targets'][:-1], phases, metadata)
     assert np.allclose(data['sim_time'], np.arange(states) / 60, rtol=0, atol=1e-10)
     cameras = metadata['camera_names']
     assert set(cameras) == {'base_camera', 'wrist_camera'}
@@ -139,7 +144,29 @@ def validate(directory, collector=None, replay_only=False):
         row['finger_contact_pos_w'][~valid] = np.nan
         return row
 
-    score = score_module.CollectionScore(row_at(0), metadata['task'])
+    is_v3 = metadata['success_contract'].get('version') == 'com_translation_pose_arc_v3'
+    static_status = 'unknown'
+    if is_v3:
+        native = json.loads((directory / 'NATIVE_PHYSICS.json').read_text())
+        com = np.asarray(native['coms_actor_local_pose_xyzw'], dtype=float)[0, :3]
+        assert np.array_equal(com, metadata['actor_local_com_m']), 'Native COM changed'
+        score = score_module.CollectionScore(row_at(0), metadata['task'], com_local_m=com)
+        static_module_path = source / 'static_state.py'
+        spec = importlib.util.spec_from_file_location('_static_replay', static_module_path)
+        static_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(static_module)
+        with np.load(directory / 'INITIAL_STATIC_TRACE.npz', allow_pickle=False) as z:
+            static_data = {key: z[key] for key in z.files}
+        static = static_module.evaluate(static_data, metadata['asset']['bounds_min'], metadata['asset']['bounds_max'])
+        assert static == metadata['initial_static_audit'] == json.loads((directory / 'INITIAL_STATIC_AUDIT.json').read_text())
+        assert np.array_equal(static_data['object_pose'][-1], data['object_pose'][0]), 'Static/rollout endpoint mismatch'
+        assert static_data['contact_substep_physics_tick'][-1, -1] == ticks[0, -1], 'Static/rollout tick mismatch'
+        static_status = static['status']
+        if static_status != 'passed':
+            assert n == 0 and metadata['physical_attempts'] == 0 and not metadata['success']
+            assert metadata['reason'] == 'initial_object_not_static'
+    else:
+        score = score_module.CollectionScore(row_at(0), metadata['task'])
     differences = []
     derived_keys = None
     first_terminal = None
@@ -160,6 +187,16 @@ def validate(directory, collector=None, replay_only=False):
         if score.reason is not None and first_terminal is None:
             first_terminal = index
     report = score.report(metadata['reason'])
+    independent = None
+    if is_v3:
+        independent_path = HERE / 'independent_hold.py'
+        spec = importlib.util.spec_from_file_location('_independent_hold_check', independent_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        independent = module.hold_evidence(data, metadata['success_contract'], com)
+        assert independent['success_on_recorded_prefix'] == bool(score.success), 'Independent hold result differs'
+        assert independent['first_success_state'] == score.first_success_step, 'Independent hold timing differs'
+        assert independent['best_window'] == score.best_window, 'Independent hold window differs'
     assert not score.primary.motion_errors, score.primary.motion_errors
     if not replay_only:
         assert not differences, differences
@@ -181,7 +218,7 @@ def validate(directory, collector=None, replay_only=False):
             snapshot = directory / 'source_snapshot' / Path(path).name
             assert sha(snapshot) == expected, 'Launch source snapshot hash changed: ' + str(snapshot)
     return dict(
-        status='passed', scope='retrospective_replay_only' if replay_only else 'new_v2_episode_integrity',
+        status='passed', scope='retrospective_replay_only' if replay_only else 'episode_integrity',
         formal_eligible=not replay_only and metadata['role'] == 'formal',
         episode=str(directory), case_id=metadata['case_id'],
         included_in_formal_score=metadata['role'] == 'formal' and not replay_only,
@@ -194,8 +231,11 @@ def validate(directory, collector=None, replay_only=False):
         legacy_reason_on_collected_prefix=report['legacy_reason_on_collected_prefix'],
         exact_saved_derived_fields_replayed=not replay_only, derived_fields_checked=derived_keys,
         score_diagnostics=report, trajectory_sha256=sha(directory / 'trajectory.npz'),
+        initial_static_status=static_status, unified_motion_scoring=is_v3,
+        independent_hold_evidence=independent,
         scoring_source=str(source), score_source_sha256={name: sha(source / name) for name in (
-            'collection_score.py', 'pose_motion_score.py', 'legacy_scoring.py')})
+            'collection_score.py', 'pose_motion_score.py', 'legacy_scoring.py',
+            *(['linear_motion_score.py', 'static_state.py'] if is_v3 else []))})
 
 
 if __name__ == '__main__':

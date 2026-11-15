@@ -55,6 +55,10 @@ def summarize(output):
             row = dict(stage=stage["name"], case_id=metadata["case_id"], object_id=metadata["object_id"],
                        success=metadata["success"], validated=validated, initial_state_audit_status=audit_status,
                        reason=metadata["reason"],
+                       initial_static_status=(metadata.get('initial_static_audit') or {}).get('status', 'unknown'),
+                       grasp_initialization_eligible=(
+                           (metadata.get('initial_static_audit') or {}).get('status') == 'passed'
+                           and audit_status == 'passed' and metadata['reason'] != 'invalid_initial_geometry'),
                        actions=metadata["actions"], reused_environment=metadata["reused_environment"],
                        initialization_s=metadata["initialization_s"], episode_wall_s=metadata["episode_wall_s"],
                        planning_s=timing["planning"], planner_queue_s=metadata["queue_wait_s"],
@@ -73,6 +77,13 @@ def summarize(output):
             stage=stage["name"], status=stage_receipt.get("status", "not_started"),
             planned_slots=len(stage["cases"]), saved_slots=len(stage_rows),
             missing_slots=len(stage["cases"]) - len(stage_rows),
+            initial_static_ineligible=sum(r['initial_static_status'] == 'ineligible' for r in stage_rows),
+            initial_static_unknown=sum(r['initial_static_status'] == 'unknown' for r in stage_rows),
+            valid_grasp_denominator=sum(r['grasp_initialization_eligible'] for r in stage_rows),
+            static_qualified_success_fraction=(
+                sum(r['success'] and r['validated'] and r['grasp_initialization_eligible'] for r in stage_rows)
+                / sum(r['grasp_initialization_eligible'] for r in stage_rows)
+                if any(r['grasp_initialization_eligible'] for r in stage_rows) else None),
             scored_successes=successes, validated_successes=accepted,
             requested_state_validated_successes=requested_accepted,
             requested_state_validated_successes_per_collection_hour=requested_accepted * 3600 / wall if wall else None,

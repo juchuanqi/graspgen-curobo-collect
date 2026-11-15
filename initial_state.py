@@ -77,7 +77,7 @@ def install_reset_guard(episode, env, entry, asset, reference_xy, output, raw_po
             status="passed" if passed else "failed", case_id=entry["case_id"],
             first_reset_primed=prime_first, expected_settled_pose=expected,
             cached_settled_pose=cached, raw_settled_pose=raw, checks=checks))
-        if not passed:
+        if not passed and episode.reason != 'initial_object_not_static':
             episode.reason, episode.success = "requested_initial_state_mismatch", False
 
     episode.reset = checked_reset

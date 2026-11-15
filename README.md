@@ -66,6 +66,31 @@ bash run.sh collect --objects all --episodes-per-object 30 --workers 3 --gpus 0,
 
 每个预定初态只做一次物理尝试，普通抓取失败保留，技术故障或初态核查失败会停止；不会补抓至成功。连续批次默认统计尝试完成情况，`--smoke` 还要求两条都通过抓取、初态与数据校验才返回成功。建议先完成 smoke 再扩大批次。
 
+可选关节速度配置（默认仍为原速度）：
+
+```bash
+bash run.sh collect --smoke --gpus 0 --arm-speed-profile recommended
+bash run.sh collect --objects all --episodes-per-object 30 --workers 3 --gpus 0,1,2,3 --arm-speed-profile recommended
+```
+
+`recommended` 将接近段速度/路径进度加速度设为 1.0 rad/s、5.0 rad/s²，持物抬升段为 0.3 rad/s、2.0 rad/s²；下降、离桌直线、闭合和保持沿用原设置。重定时后的路径仍经过完整几何复核。配置写入 `PLAN.json` 和每条 `METADATA.json`，独立验证按保存配置检查各阶段动作增量，无需再设置环境变量。`--arm-speed-profile baseline` 显式恢复原速度；命令行优先于实验用的 `ARM_SPEED_PROFILE` 环境变量。当前为实验性可选配置。2026-11-11四物品各30条验收：方块、长条、圆柱各30/30成功，圆盘17/30；120条初态与完整数据校验均通过，但物理成功门槛未通过，因此默认仍为原速度。圆盘6对同初态同候选诊断：原速度4/6、新速度3/6，暂不作普遍质量等价结论。
+
+## 夹爪对称朝向选择
+
+通过 `--grasp-symmetry near-first` 开启当前夹爪朝向感知的候选配对：
+
+```bash
+bash run.sh collect --smoke --gpus 0 --grasp-symmetry near-first
+# 只查看计划：
+bash run.sh collect --objects all --grasp-symmetry near-first --dry-run
+```
+
+对每个已转换到 TCP 坐标约定的候选，生成 `R' = R @ diag(-1,-1,1)`，保持 TCP 位置与接近轴 Z，交换两指方向。用实时物体位姿转换到世界坐标，再计算与当前实测夹爪的完整三维转角。N 个源候选得到 N 个近向和 N 个远向版本；16 个源候选即两组各 16 个，不额外调用模型。夹角相同优先保留原朝向。
+
+两组分别进行完整夹爪场景几何筛选，每组最多保留 50 个；随后对两组候选做批量 IK。完整规划优先近向组，组内沿用关节运动量排序；远向组作为剩余预算内的后备。两组共用最多 5 个完整规划候选，每个仍为 30 秒软预算，完整机械臂几何与自碰撞检查保持。此偏好减少的是目标朝向差，实际关节路程和轨迹转角仍须测量。
+
+`PLAN.json`、任务及回合元数据保存模式；`CANDIDATE_REPORT.json` 保存配对、夹角、IK 和规划顺序。派生候选有独立 `candidate_id`，保留父候选索引和模型分数，派生 `score` 为空。默认 `--grasp-symmetry off` 沿用原流程。该功能已做 CPU 回归，尚未进行新增物理抓取验收。
+
 ## 当前支持的物体
 
 | ID | 形状 | 尺寸 mm |
@@ -102,3 +127,7 @@ python3 -B tools/package.py --output /目标目录/graspgen_curobo_collect.tar.g
 ```
 
 本次迁移的验证边界见 [验证说明](docs/VALIDATION.md)。依赖与资产来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+基础数据验收可用 `bash run.sh pipeline --help`：固定采集 → 运动/静止证据校验 → 严格筛选 → 原生 LeRobot v3 导出 → 官方完整读取 → 短 ACT 训练。默认 4 种基础物体各 5 条，失败保留，不重试；详见 [验收说明](docs/VALIDATION.md)。
+
+2026-11-13 固定批次经一次初始化显存故障恢复后，20/20 条独立稳持确认通过，完成 16,836 行官方读回和 100 步 ACT 训练检查。结果、复现入口和资源恢复边界见 [基础管线验收](docs/PIPELINE_ACCEPTANCE_20261113.md)。
