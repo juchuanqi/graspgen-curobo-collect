@@ -22,6 +22,8 @@ def main():
                         help="Runtime config used by the source collection")
     parser.add_argument("--stage", help="Stage to export if the plan contains more than one")
     parser.add_argument("--per-object", type=int, help="Limit selection for a pilot export")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="1: one package; >1: one fully audited package per object, exported concurrently")
     parser.add_argument('--allow-legacy-unverified', action='store_true', help='Historical format debugging only')
     args = parser.parse_args()
     run, output = args.run.resolve(), args.output.resolve()
@@ -33,11 +35,15 @@ def main():
         parser.error(f"Output already exists: {output}")
     if args.per_object is not None and args.per_object < 1:
         parser.error("--per-object must be positive")
+    if args.workers < 1:
+        parser.error("--workers must be positive")
 
     python = interpreter(args.python, "LEROBOT_PYTHON")
     env = {**os.environ, "CUDA_VISIBLE_DEVICES": "", "HF_HUB_OFFLINE": "1",
            "HF_DATASETS_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1",
-           "HF_HOME": str(output / ".cache" / "huggingface")}
+           "HF_HOME": str(output / ".cache" / "huggingface"),
+           "OMP_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "2", "MKL_NUM_THREADS": "2",
+           "USE_TF": "0", "USE_FLAX": "0", "PYTHONDONTWRITEBYTECODE": "1"}
     installed = subprocess.check_output(
         [python, "-B", "-c", "from importlib.metadata import version; print(version('lerobot'))"],
         text=True, env=env,
@@ -56,11 +62,16 @@ def main():
     if args.allow_legacy_unverified:
         select.append('--allow-legacy-unverified')
 
-    for stage, script, arguments in (
-        ("selection", "select_sources.py", select),
+    stages = [("selection", "select_sources.py", select)]
+    if args.workers > 1:
+        stages.append(("shards", "sharded_export.py", ["--selection", selection, "--output", output,
+                                                      "--workers", str(args.workers)]))
+    else:
+        stages.extend([
         ("export", "export_lerobot.py", ["--selection", selection, "--output", portable]),
         ("audit", "audit_lerobot.py", [portable, "--output", audit]),
-    ):
+        ])
+    for stage, script, arguments in stages:
         log = output / f"{stage}.log"
         print(f"{stage}: {log}", flush=True)
         with log.open("w") as stream:
@@ -68,6 +79,45 @@ def main():
                                     env=env, stdout=stream, stderr=subprocess.STDOUT)
         if result.returncode:
             raise SystemExit(f"{stage} failed (exit {result.returncode}); see {log}")
+    if args.workers > 1:
+        (portable / 'DATA_USAGE.md').write_text('''# Local sharded grasp dataset
+
+Use `lerobot==0.4.4`. Every `shards/<object>/dataset` is a standalone LeRobot v3
+dataset with lossless embedded PNG images. Each shard passed full official-loader
+readback and independent statistics. `SHARDS.json` binds their audit receipts and
+records the exact union of the global `SELECTION.json`; excluded slots remain there.
+
+Load all objects together with the official multi-dataset loader:
+
+```python
+import json
+from pathlib import Path
+from lerobot.datasets.lerobot_dataset import MultiLeRobotDataset
+
+portable = Path('/absolute/path/to/portable')
+manifest = json.loads((portable / 'SHARDS.json').read_text())
+data = MultiLeRobotDataset(
+    repo_ids=[f"{s['object_id']}/dataset" for s in manifest['shards']],
+    root=portable / 'shards',
+    delta_timestamps={'action': [i / 60 for i in range(16)]},
+)
+# Pass data.stats to the policy's official preprocessor for joint normalization.
+```
+
+The package uses relative shard paths and can be moved as a whole. Each episode
+has its own indices and padding masks; never join action chunks across episodes.
+Control and RGB are 60 Hz. State/action are float32 8D: seven arm angles/absolute
+position targets in radians plus measured/target total finger opening in metres.
+Two 256x256 RGB observations and the measured state are model inputs. Actions are
+position targets, not velocity or delta. N actions pair with observations 0:N;
+terminal observation N and physical evidence remain in each shard's sidecars.
+Training does not need the original raw run. Repeating raw-data comparison does.
+
+The project train_check.py accepts this portable directory and its parent AUDIT.json
+directly. A short ACT check validates data consumption, not closed-loop performance.
+''')
+        print(f"Shards: {portable / 'SHARDS.json'}\nReadback: {audit}")
+        return
     (portable / 'DATA_USAGE.md').write_text('''# Local grasp dataset
 
 Use `lerobot==0.4.4`. The `dataset/` directory is native LeRobot v3.0 and contains

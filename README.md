@@ -132,6 +132,18 @@ bash run.sh export --run outputs/原始采集目录 --output outputs/新导出�
 
 命令会筛选通过抓取、初态和数据校验的回合，写入 LeRobot v3，并用官方加载器逐行读回核对。见[导出和数据约定](docs/LEROBOT.md)。
 
+并行后处理使用 `export --workers 4`：整批严格筛选一次，再按物体并行生成独立标准包，每包均完成完整读回和独立统计。训练检查自动联合读取这些包，并使用合并统计。
+
+```bash
+bash run.sh export --run outputs/原始采集目录 --output outputs/新分片目录 \
+  --workers 4 --python /你的/lerobot-venv/bin/python
+# 新采集批次自动接入并行后处理；仿真并发仍由原 --workers 控制。
+bash run.sh pipeline --output outputs/新批次 --data-only --export-workers 4 \
+  --candidate-root /你的/candidates --lerobot-python /你的/lerobot-venv/bin/python
+```
+
+默认仍为单包导出。分片数据位于 `portable/shards/<物体>/dataset`，合集与逐包审计绑定于 `portable/SHARDS.json`；联合训练方法见生成的 `DATA_USAGE.md`。分片后处理不启动新仿真，不改变筛选或质量门槛。
+
 ## 原测速模式与工具
 
 ```bash

@@ -15,6 +15,10 @@ bash run.sh pipeline --output /absolute/new-run --resume
 bash run.sh pipeline --output /absolute/new-data-run --data-only \
   --candidate-root /absolute/candidates --lerobot-python /path/to/lerobot/python
 
+# 新批次按物体并行生成标准包，每包完整审核；训练检查联合读取各包。
+bash run.sh pipeline --output /absolute/new-sharded-run --export-workers 4 --data-only \
+  --candidate-root /absolute/candidates --lerobot-python /path/to/lerobot/python
+
 # 已通过数据交付的批次，之后单独补ACT检查。
 bash run.sh pipeline --output /absolute/new-data-run --resume --with-training
 
@@ -51,7 +55,7 @@ bash run.sh pipeline --output /absolute/new-eight-gpu-run \
 
 导出或读回中断可重新从完整原始记录执行后处理；已完成的数据包直接复用。训练失败只重跑训练，不重新采集或重新导出。`PIPELINE.json` 分开保存 `data_status` 和 `training_status`；训练失败时已通过的数据交付仍有效。导出目录或源码受损时停止，不将它替换成另一份结果。
 
-训练入口指向 `export/portable/dataset`。关节顺序、单位、总开口、60 Hz 时间、双相机、动作对齐、末观测和 padding 见每个新包的 `export/portable/DATA_USAGE.md`。重新做原始数据独立审计还需要源记录，训练读取无需仿真环境。
+默认训练数据位于 `export/portable/dataset`。使用 `--export-workers 4` 时，数据位于 `export/portable/shards/<物体>/dataset`，`SHARDS.json` 绑定全部逐包审计；ACT 检查自动使用官方多数据集加载器及合并统计。仿真 `--workers` 与导出 `--export-workers` 分别登记，恢复不可更改。整批导出完成后照常原子发布和封存；失败分片不提前发布，后处理恢复从原始数据重新执行。关节顺序、单位、总开口、60 Hz 时间、双相机、动作对齐、末观测和 padding 见每个新包的 `export/portable/DATA_USAGE.md`。重新做原始数据独立审计还需要源记录，训练读取无需仿真环境。
 
 时间累计各次监督进程互不重叠的实际运行区间，包含该入口的逐槽校验和退出开销；停机等待另列。SIGKILL 等缺少结束回执的区间不伪造时长：累计值标为下界、`timing_complete=false`，对应报告不输出吞吐率。恢复实验不是性能对照。
 ## 显式初态与分批检查点
