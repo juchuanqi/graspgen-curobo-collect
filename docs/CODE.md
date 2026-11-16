@@ -2,13 +2,17 @@
 
 | 路径 | 用途 |
 |---|---|
-| `cli.py` / `run.sh` | 选择准备、采集、预检、测速入口及对应解释器 |
+| `cli.py` / `run.sh` | 选择准备、采集、预检、测速、导出和完整数据管线入口及对应解释器 |
 | `generate_candidates.py` | mesh 均匀采样、GraspGen 单次生成与几何筛选 |
-| `collect.py` / `common.py` | 固定初态计划、进程调度、共享规划服务、输出与退出处理 |
+| `collect.py` / `common.py` | 固定初态计划、GPU 映射、进程调度、输出与退出处理 |
+| `resumable_collect.py` / `recovery.py` | 逐槽账本、有限初始化恢复、互斥、指纹核验与有界 CPU 验证 |
+| `coverage_plan.py` | 四物体分层初态清单及每物体前缀检查点 |
 | `sim_worker.py` / `initial_state.py` | 常驻 Isaac 环境、连续 reset、独立 PhysX 初态核查 |
-| `planner_service.py` | 本机回环地址上的共享规划服务；每次请求串行更新场景 |
+| `planner_service.py` | 本机回环规划服务；四卡最多三路共享，八卡每路同卡专属，每个服务串行更新自身场景 |
 | `runtime/collector/episode_factory.py` | 接近、下降、闭合、抬升、保持、双相机与状态保存 |
-| `runtime/collector/fast_env_v2.py` | 当前 I/O 优化与完整 8 子步接触记录 |
+| `runtime/collector/fast_env_v2.py` | 基础 I/O 优化与完整 8 子步接触记录 |
+| `runtime/collector/fast_env_v3.py` 至 `fast_env_v6.py` | 逐层接入传感器环形调度、接触 Graph、相机调度和执行器 Graph；普通采集默认 accelerated 使用 v6 |
+| `runtime/collector/overlap.py` | 闭合状态几何检查与 lift RPC 并行，二者通过后才允许执行 |
 | `runtime/collector/generic_planner.py` | cuRobo 与完整目标、桌面、夹爪、机械臂检查 |
 | `runtime/collector/arm_speed.py` | 可选分阶段速度、路径重定时、记录配置及离线动作上限检查 |
 | `runtime/collector/grasp_symmetry.py` | TCP 局部 Z 轴 180° 配对、当前世界朝向夹角、近向/远向分组及来源记录 |
@@ -17,6 +21,8 @@
 | `runtime/validators/` | 时序、RGB、评分重放及原始接触力校验 |
 | `runtime/config/scene.json` | 相机标定、初始关节、物体参考位置 |
 | `runtime/assets/` / `runtime/robot/` | 物体、Panda USD / URDF 与碰撞模型 |
+| `tools/pipeline.py` / `tools/recoverable_pipeline.py` | 冻结源码、采集、严格导出/读回及可选 ACT 检查；后处理阶段可恢复与复用 |
+| `tools/guarded_process.py` | Linux 父进程死亡保护与继承锁，防止恢复时重叠执行 |
 
 ## 坐标和执行约定
 

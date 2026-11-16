@@ -10,6 +10,7 @@ from io_audit import LiveIOAudit
 from geometry.api import check_robot_path
 from target_provider import load_candidate_source
 import arm_speed
+from overlap import run_overlap
 import grasp_symmetry
 import static_state
 
@@ -71,10 +72,14 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
         def status(self, state):
             write(args.output / 'STATUS.json', {'state': state, 'case_id': entry['case_id'], 'method': args.method, 'actions': len(self.actions), 'wall_s': time.monotonic() - self.started, 'reason': self.reason})
 
-        def plan(self, command, **kwargs):
+        def request(self, command, **kwargs):
             request = dict(command=command, scene=self.scene(), seed=int(entry['scene_seed']), out=str(args.output / 'planning' / command), **kwargs)
             request['scene']['arm_speed_profile'] = SPEED_PROFILE.describe()
             request['scene']['grasp_symmetry'] = self.grasp_symmetry
+            return json.loads(json.dumps(request, allow_nan=False))
+
+        def plan(self, command, **kwargs):
+            request = self.request(command, **kwargs)
             write(args.output / f'{command}_request.json', request)
             self.status('planning_' + command)
             started = time.monotonic()
@@ -258,17 +263,37 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
                 return
             closure = np.stack([r['qpos'] for r in self.rows[close_begin:]])
             objects = np.stack([matrix(r['object_pose']) for r in self.rows[close_begin:]])
-            geometry_started = time.monotonic()
-            checked = check_robot_path(closure, closure[:, 7:].sum(axis=1), objects, entry['object_id'], base_pose=matrix(env.robot.data.root_link_pose_w[0].cpu().numpy()), allow_pad_contact=True, pad_penetration_m=0.001)
+            base_pose = matrix(env.robot.data.root_link_pose_w[0].cpu().numpy())
+            def check_closure():
+                return check_robot_path(closure, closure[:, 7:].sum(axis=1), objects, entry['object_id'], base_pose=base_pose, allow_pad_contact=True, pad_penetration_m=0.001)
+            budget = self.selected['remaining_budget_s']
+            if getattr(args, 'overlap_lift', False):
+                # All simulator reads occur before the RPC thread starts.
+                request = self.request('lift', remaining_budget_s=budget)
+                write(args.output / 'lift_request.json', request)
+                self.status('planning_lift_with_closure')
+                started = time.monotonic()
+                checked, reply, events = run_overlap(lambda: planner.request(request), check_closure, budget)
+                self.timing['planning'] += (events['rpc_ended_ns'] - events['rpc_started_ns']) / 1e9
+                closure_geometry_s = events['geometry_s']
+                self.timing['closure_lift_joint_wall'] = time.monotonic() - started
+                self.planner_replies.append(reply)
+                write(args.output / 'lift_reply.json', reply)
+                write(args.output / 'CLOSURE_LIFT_OVERLAP.json', events)
+            else:
+                geometry_started = time.monotonic()
+                checked = check_closure()
+                closure_geometry_s = time.monotonic() - geometry_started
+                reply = None
             checked['contact_mode'] = 'measured_grasp_1mm; raw PhysX depth<=1mm and nonpad<=1N remain hard limits'
-            closure_geometry_s = time.monotonic() - geometry_started
             self.timing['closure_geometry'] = closure_geometry_s
             write(args.output / 'CLOSURE_GEOMETRY.json', checked)
             if not checked['valid']:
                 self.reason = 'closure_full_geometry_failed'
                 return
             self.phase = 3
-            reply = self.plan('lift', remaining_budget_s=max(0.0, self.selected['remaining_budget_s'] - closure_geometry_s))
+            if not getattr(args, 'overlap_lift', False):
+                reply = self.plan('lift', remaining_budget_s=max(0.0, budget - closure_geometry_s))
             if not reply or not reply.get('success'):
                 self.reason = (reply or {}).get('reason', 'lift_planning_failed')
                 return
@@ -301,6 +326,7 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
             if self.rows:
                 metadata.update(max_lift_m=float(max((float(r['lift_m']) for r in self.rows))), maximum_forbidden_force_n=float(max((float(r['forbidden_force_n']) for r in self.rows))), final_pad_force_n=self.row['pad_object_force_n'].tolist(), final_object_table_force_n=float(self.row['object_table_peak_n']))
             metadata['arm_speed_profile'] = SPEED_PROFILE.describe()
+            metadata['execution_profile'] = getattr(args, 'execution_profile', 'baseline')
             metadata['grasp_symmetry'] = self.grasp_symmetry
             metadata['actor_local_com_m'] = self.com_local_m.tolist() if hasattr(self, 'com_local_m') else None
             metadata['initial_static_audit'] = getattr(self, 'static_audit', None)

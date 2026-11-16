@@ -2,6 +2,8 @@
 
 2026-11-13 的固定批次完成了四种基础物体的采集、独立校验、LeRobot v3 导出、官方完整读回和 ACT 短训练检查。2026-11-15 复核回执并补齐归档。
 
+后续工作区已加入通用恢复、逐槽位账本和独立数据交付模式，操作见[恢复与交付说明](RECOVERY.md)。下文保留 `3b70546` 基线批次的过程和边界；新恢复协议适用于新登记的批次。
+
 | 项目 | 实测结果 |
 | --- | --- |
 | 固定采集槽位 | 长方体、细长条、圆柱、圆盘各 5 条，合计 20 条 |
@@ -22,10 +24,11 @@
 
 ```bash
 bash run.sh pipeline --output /absolute/new-directory --gpus 0,1,2,3 --workers 3 \
-  --candidate-root /absolute/candidates --lerobot-python /path/to/lerobot/python
+  --arm-speed-profile baseline --execution-profile baseline --candidate-root /absolute/candidates \
+  --lerobot-python /path/to/lerobot/python
 ```
 
-默认每物体 5 个固定槽，baseline 速度、symmetry off，随后严格筛选、导出、完整读回和 100 步 ACT 检查。入口先冻结本次源码，全部阶段从副本运行；各阶段日志和 `PIPELINE.json` 保留在输出目录。执行失败会停止并保存原因；这次显存故障的恢复使用了专门的恢复脚本，主入口尚未实现自动恢复。
+该历史验收每物体 5 个固定槽，baseline 速度、symmetry off，随后严格筛选、导出、完整读回和 100 步 ACT 检查。复现该速度时需显式传 `--arm-speed-profile baseline`；2026-11-16 起新 `pipeline` 默认采用已有 `recommended` 提速档位。入口先冻结本次源码，全部阶段从副本运行；各阶段日志和 `PIPELINE.json` 保留在输出目录。执行失败会停止并保存原因；这次显存故障的恢复使用了专门的恢复脚本，后续主入口的通用恢复见 [恢复说明](RECOVERY.md)。
 
 仅导出已完成且启用了数据校验的批次可使用 `bash run.sh export --help`。默认要求静止和完整稳持证据；`--allow-legacy-unverified` 只供历史格式调试，无法通过新训练检查。
 
