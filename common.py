@@ -26,8 +26,8 @@ def local_setting(name, default=None):
 def collection_plan(objects, episodes, workers=1, seed=2026207000):
     if not 1 <= episodes <= 10000:
         raise ValueError("--episodes-per-object must be between 1 and 10000")
-    if not 1 <= workers <= 3:
-        raise ValueError("--workers must be between 1 and 3")
+    if not 1 <= workers <= 8:
+        raise ValueError("--workers must be between 1 and 8")
     if not objects or len(set(objects)) != len(objects) or any(n not in OBJECTS for n in objects):
         raise ValueError("Select distinct bundled object IDs, or all")
     if not 0 <= seed <= 2**32 - 400000:
@@ -131,8 +131,8 @@ def make_plan(full=False, only=None, smoke=False, episodes_per_worker=None):
 
 def gpu_tokens(selection, inherited=None):
     indices = [int(v) for v in selection.split(",")]
-    if len(indices) not in (1, 2, 4) or len(set(indices)) != len(indices) or min(indices) < 0:
-        raise ValueError("--gpus accepts one GPU, two GPUs (simulation,planner), or four GPUs (three simulations,planner)")
+    if len(indices) not in (1, 2, 4, 8) or len(set(indices)) != len(indices) or min(indices) < 0:
+        raise ValueError("--gpus accepts one, two, four, or eight GPUs; eight GPUs use one dedicated simulator/planner pair per GPU")
     inherited = os.environ.get("CUDA_VISIBLE_DEVICES") if inherited is None else inherited
     if inherited is not None:
         visible = [v.strip() for v in inherited.split(",") if v.strip()]
@@ -146,6 +146,17 @@ def gpu_tokens(selection, inherited=None):
     if len(result) == 2:
         return [result[0]] * 3 + [result[1]]
     return result
+
+
+def device_layout(tokens, workers):
+    """Expanded legacy tokens or eight dedicated simulator/planner pairs."""
+    if len(tokens) == 8 and 1 <= workers <= 8:
+        return dict(mode='dedicated_per_gpu', simulation=tokens[:workers],
+                    planners=tokens[:workers], lane_to_planner=list(range(workers)))
+    if len(tokens) == 4 and 1 <= workers <= 3:
+        return dict(mode='shared_planner', simulation=tokens[:workers],
+                    planners=[tokens[3]], lane_to_planner=[0] * workers)
+    raise ValueError('Use up to three workers with four GPUs, or up to eight workers with eight GPUs')
 
 
 class PlannerClient:

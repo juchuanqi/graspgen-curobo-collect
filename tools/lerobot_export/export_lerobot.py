@@ -13,6 +13,7 @@ import torch
 from lerobot.datasets.lerobot_dataset import CODEBASE_VERSION, LeRobotDataset
 
 from bridge import CAMERAS, feature_spec, physical8, read, sha, verify_inputs, write
+from stable_statistics import stable_statistics
 
 
 def main(args):
@@ -64,6 +65,7 @@ def main(args):
                 if name.startswith("cameras/"):
                     continue
                 target = sidecar / name
+                target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source / name, target)
                 assert sha(target) == expected
             for camera, frames in images.items():
@@ -83,7 +85,8 @@ def main(args):
                 for camera, frames in images.items():
                     frame[f"observation.images.{camera}"] = np.array(frames[t], copy=True)
                 writer.add_frame(frame)
-            writer.save_episode()
+            with stable_statistics():
+                writer.save_episode()
             records.append(dict(episode, sidecar=str(sidecar.relative_to(args.output))))
             print("EXPORTED", episode["case_id"], n, flush=True)
     finally:
@@ -97,6 +100,7 @@ def main(args):
         dataset_format=CODEBASE_VERSION, lerobot_package=importlib.metadata.version("lerobot"),
         fps=60, episodes=records, rows=info["total_frames"], role=selection["role"],
         image_storage="lossless PNG bytes embedded in Parquet",
+        statistics="float64 centered moments after storage dtype quantization; official image sampling and histogram quantiles",
         state_mapping="qpos[t, :7] + sum(qpos[t, 7:9]); 7 measured radians + total opening meters",
         action_mapping="action_targets[t, :7] + sum(action_targets[t, 7:9]); absolute 7 joint position targets + total target opening",
         terminal_policy="N actions with obs[0:N]; original N+1 raw arrays and terminal camera NPYs retained in sidecars",

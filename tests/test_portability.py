@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "runtime"))
 sys.path.insert(0, str(ROOT / "runtime/collector"))
 import numpy as np
-from common import PlannerClient, collection_plan, gpu_tokens, make_plan, read, write
+from common import PlannerClient, collection_plan, gpu_tokens, device_layout, make_plan, read, write
 from collect import Processes, job_waves, run_stage
 from generate_candidates import restore_grasps, surface_sample
 from initial_state import install_reset_guard, pose_comparison, requested_pose
@@ -37,6 +37,15 @@ class PortabilityTests(unittest.TestCase):
         for invalid in ("0,0", "0,1,2", "-1", "3"):
             with self.assertRaises(ValueError):
                 gpu_tokens(invalid, "0,1")
+
+    def test_eight_gpu_mapping_retains_dedicated_lane_identity(self):
+        allocated=','.join(f'GPU-{i}' for i in reversed(range(8)))
+        tokens=gpu_tokens('0,1,2,3,4,5,6,7',allocated)
+        layout=device_layout(tokens,8)
+        self.assertEqual(layout['simulation'],allocated.split(','))
+        self.assertEqual(layout['planners'],layout['simulation'])
+        self.assertEqual(layout['lane_to_planner'],list(range(8)))
+        with self.assertRaises(ValueError):device_layout(['0','1','2','3'],8)
 
     def test_fixed_long_batch_covers_every_slot_once(self):
         plan = collection_plan(["block55", "slender95", "cylinder36h52", "disk56h24"], 30, 3)
@@ -155,7 +164,7 @@ class PortabilityTests(unittest.TestCase):
                 "job=json.loads(Path(a.job).read_text());out=Path(a.output);out.mkdir(parents=True)\n"
                 "(out/'seen.json').write_text(json.dumps(dict(job=job,args=unknown)))\n")
             args = SimpleNamespace(output=output, runtime=ROOT / "runtime", candidate_root=root / "new candidates",
-                                   startup_timeout=10, episode_timeout=10, gui=True)
+                                   startup_timeout=10, episode_timeout=10, gui=True, grasp_symmetry="near-first")
             stage = collection_plan(["block55"], 2)["stages"][0]
             processes = Processes()
             try:
@@ -165,6 +174,7 @@ class PortabilityTests(unittest.TestCase):
                 worker = Path(receipt["jobs"][0]["output"])
                 seen = read(worker / "seen.json")
                 self.assertEqual(seen["job"]["candidate_root"], str(args.candidate_root))
+                self.assertEqual(seen["job"]["grasp_symmetry"], "near-first")
                 self.assertNotIn("--headless", seen["args"])
                 self.assertEqual(receipt["status"], "completed")
             finally:

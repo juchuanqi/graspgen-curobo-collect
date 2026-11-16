@@ -15,6 +15,7 @@ from lerobot.datasets import lerobot_dataset as official
 from PIL import Image
 
 from bridge import CAMERAS, read, sha, verify_inputs, write
+from audit_statistics import audit_statistics
 
 
 def array(value):
@@ -141,7 +142,8 @@ def audit(package):
     np.testing.assert_array_equal(array(subset[-1]["action_is_pad"]), [False, True, True])
     report.update(parquet_rows=parquet_rows, embedded_png_every_row=True,
                   exact_float64_times_in_storage=True, filtered_episode_indices_and_padding_passed=True,
-                  terminal_observations_preserved_without_extra_actions=True)
+                  terminal_observations_preserved_without_extra_actions=True,
+                  statistics=audit_statistics(package))
     return report
 
 

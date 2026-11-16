@@ -10,10 +10,16 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools/lerobot_export"))
 from bridge import CAMERAS, read, write
-from select_sources import main as select
+from select_sources import main as select, verify_trust
 
 
 class LeRobotSelectionTests(unittest.TestCase):
+    def test_strict_gate_rejects_legacy_or_missing_static(self):
+        with self.assertRaisesRegex(ValueError, 'unverified_motion_version'):
+            verify_trust(Path('/missing'), {}, ROOT / 'runtime')
+        with self.assertRaisesRegex(ValueError, 'initial_static_not_passed'):
+            verify_trust(Path('/missing'), {'success_contract': {'version': 'com_translation_pose_arc_v3'}}, ROOT / 'runtime')
+
     def test_selector_checks_raw_start_and_retains_fixed_denominator(self):
         with tempfile.TemporaryDirectory() as tmp:
             run = Path(tmp)
@@ -49,7 +55,8 @@ class LeRobotSelectionTests(unittest.TestCase):
                          contact_substep_object_pose_w=native[None, None])
                 for camera in CAMERAS:
                     np.save(episode / "cameras" / f"{camera}.npy", np.empty(0))
-            args = Namespace(run=run, runtime=runtime, output=output, stage=None, per_object=None)
+            args = Namespace(run=run, runtime=runtime, output=output, stage=None, per_object=None,
+                             allow_legacy_unverified=True)
             select(args)
             result = read(output)
             self.assertEqual((result["stage"], result["fixed_slots"], result["selected_episodes"]), ("collection", 5, 1))

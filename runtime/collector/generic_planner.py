@@ -30,6 +30,10 @@ from geometry.api import check_robot_path
 from geometry.robot import fk
 from geometry.primitives import pose_matrix, part_matrix
 from target_provider import screen_scene_candidates
+import arm_speed
+import grasp_symmetry
+
+SPEED_PROFILE = arm_speed.from_environment()
 
 FINGERS = ["panda_leftfinger", "panda_rightfinger"]
 ATTACHMENT_SLOTS = 128
@@ -109,6 +113,8 @@ class Planner:
         return world
 
     def update(self, scene, output, remove_object=False):
+        if arm_speed.from_metadata(scene) != SPEED_PROFILE:
+            raise ValueError('Collector/planner arm speed profiles differ')
         if not np.allclose(pose_matrix(scene['base_pose']), self.base): raise ValueError('Robot base changed')
         if self.attachment is not None:
             self.motion_gen.toggle_link_collision(['attached_object'], True)
@@ -215,7 +221,7 @@ class Planner:
         save(self.output/f'CHECK_{label}.json', report)
         return report
 
-    def motion(self, start, goal, timeout, deadline=None):
+    def motion(self, start, goal, timeout, deadline=None, carry=False):
         check_deadline(deadline, "motion:before_plan")
         if timeout<=0: return None, {'reason':'candidate_planning_budget_exhausted'}
         t=time.monotonic()
@@ -229,7 +235,17 @@ class Planner:
                           reason='candidate_planning_budget_exhausted',
                           softdeadline_overrun_s=max(0.,time.monotonic()-deadline))
             return None,report
-        path=stretch(result.get_interpolated_plan().position.cpu().numpy()) if report['success'] else None
+        if report['success']:
+            raw=result.get_interpolated_plan().position.cpu().numpy()
+            if SPEED_PROFILE.enabled:
+                v,a=SPEED_PROFILE.values[2:] if carry else SPEED_PROFILE.values[:2]
+                path=arm_speed.retime(raw,v,a)
+                report['timing']=dict(profile='trapezoid',v_rad_s=v,a_rad_s2=a,steps=len(path))
+            else:
+                path=stretch(raw)
+                report['timing']=dict(profile='stretch_0.0018',steps=len(path))
+        else:
+            path=None
         check_deadline(deadline, 'motion:after_interpolation')
         return path,report
 
@@ -282,7 +298,8 @@ class Planner:
         ik_ok,ik_solutions=self.batch_ik([np.asarray(c['pregrasp_world']) for c in scene_valid], self.scene['qpos'][:7])
         report['ik_queries']=len(scene_valid);report['ik_wall_s']=time.monotonic()-t
         report['ik_passed']=int(ik_ok[:,0].sum())
-        report['scene_ik_results']=[{'original_rank':int(c['original_rank']),'ik_passed':bool(ok)} for c,ok in zip(scene_valid,ik_ok[:,0])]
+        report['scene_ik_results']=[{'original_rank':int(c['original_rank']),
+            **grasp_symmetry.identity(c),'ik_passed':bool(ok)} for c,ok in zip(scene_valid,ik_ok[:,0])]
         # Rank physically equivalent representations by robot motion demand.
         # Parent network scores describe parent poses only; no new confidence.
         initial=np.asarray(self.scene['qpos'][:7])
@@ -291,22 +308,23 @@ class Planner:
             delta=np.abs(ik_solutions[index,0]-initial)
             bound=float(delta.max()/.0018) if ik_ok[index,0] else float('inf')
             total=float(delta.sum()) if ik_ok[index,0] else float('inf')
-            costs.append((bound,total,index))
+            costs.append(grasp_symmetry.planning_key(candidate,bound,total,index))
             candidate['pregrasp_joint_motion_estimate']={'max_joint_delta_rad':float(delta.max()),
                 'sum_joint_delta_rad':float(delta.sum()),'control_steps_lower_bound':None if not ik_ok[index,0] else bound}
-        order=[index for _,_,index in sorted(costs)]
-        report['ordering_policy']='reachable pregrasp IK maximum joint travel / 0.0018, then total joint travel; fixed parent score not treated as refined confidence'
+        order=[cost[-1] for cost in sorted(costs)]
+        report['ordering_policy']='near orientation group before far when symmetry enabled; within each group reachable pregrasp IK maximum joint travel / 0.0018, then total joint travel; parent score is not derived confidence'
         report['candidate_planning_order']=[{'derived_rank':scene_valid[i]['original_rank'],
-            'parent_original_rank':scene_valid[i].get('parent_original_rank'),
-            'symmetry_variant':scene_valid[i].get('symmetry_variant'),
+            **grasp_symmetry.identity(scene_valid[i]),
             'motion_estimate':scene_valid[i]['pregrasp_joint_motion_estimate']} for i in order]
         scene_valid=[scene_valid[i] for i in order];ik_ok=ik_ok[order]
         for candidate,ok in zip(scene_valid,ik_ok[:,0]):
             if not ok:
-                report.setdefault('rejections',[]).append({'original_rank':candidate['original_rank'],'rejected':'pregrasp_ik'});continue
+                report.setdefault('rejections',[]).append({'original_rank':candidate['original_rank'],
+                    **grasp_symmetry.identity(candidate),'rejected':'pregrasp_ik'});continue
             if len(report['full_candidates'])>=maximum:break
             started=time.monotonic();deadline=started+budget_s
             attempt={'original_rank':candidate['original_rank'],'opening_m':candidate['opening_m'],
+                     **grasp_symmetry.identity(candidate),
                      'planning_budget_s':float(budget_s),'budget_type':'soft deadline; non-preemptible stages may overrun and are rejected'}
             report['full_candidates'].append(attempt)
             try:
@@ -318,13 +336,14 @@ class Planner:
                 attempt['approach_plan']=motion_report
                 if approach is None:
                     attempt['rejected']=motion_report.get('reason','pregrasp_planning');continue
-                check=self.validate(approach,candidate['opening_m'],'approach_'+str(candidate['original_rank']),deadline=deadline)
+                candidate_label=candidate.get('candidate_id',str(candidate['original_rank']))
+                check=self.validate(approach,candidate['opening_m'],'approach_'+candidate_label,deadline=deadline)
                 attempt['approach_check']=check
                 if not check['valid']:attempt['rejected']='pregrasp_full_geometry_or_self_collision';continue
                 descend,line_report=self.line(approach[-1],pre,grasp,deadline=deadline)
                 attempt['cartesian_approach']=line_report
                 if descend is None:attempt['rejected']='straight_approach_ik';continue
-                check=self.validate(descend,candidate['opening_m'],'descend_'+str(candidate['original_rank']),deadline=deadline)
+                check=self.validate(descend,candidate['opening_m'],'descend_'+candidate_label,deadline=deadline)
                 attempt['descend_check']=check
                 if not check['valid']:attempt['rejected']='descend_full_geometry_or_self_collision';continue
                 prefix_steps=30+len(approach)+20+len(descend)+20+135
@@ -412,7 +431,7 @@ class Planner:
             if not check['valid']:
                 reply={'success':False,'reason':'support_departure_geometry','report':report};return reply
             goal=tcp.copy();goal[2,3]+=.12
-            rest,motion=self.motion(liftoff[-1],goal,deadline-time.monotonic(),deadline=deadline)
+            rest,motion=self.motion(liftoff[-1],goal,deadline-time.monotonic(),deadline=deadline,carry=True)
             report['lift_motion']=motion
             if rest is None:
                 reply={'success':False,'reason':motion.get('reason','lift_planning'),'report':report};return reply

@@ -1,0 +1,42 @@
+{
+  "migrated_utc": "2026-11-16",
+  "files": {
+    "sensor_schedule.py": {
+      "source": "/mnt/public/juchuanqi/project/results/graspgen_accelerated_acceptance_20261112_01/runtime/collector/sensor_schedule.py",
+      "sha256": "69c38ea874306a5279eafd20cc46361b471944c38c8f1b165dbd86ea9642e12b"
+    },
+    "contact_graph.py": {
+      "source": "/mnt/public/juchuanqi/project/results/graspgen_accelerated_acceptance_20261112_01/runtime/collector/contact_graph.py",
+      "sha256": "4f96d0f0f84a466a11a630f15b0b4f0c8d5f13bcfa3d3cc53a2ea33be029e0cb"
+    },
+    "camera_schedule.py": {
+      "source": "/mnt/public/juchuanqi/project/results/graspgen_accelerated_acceptance_20261112_01/runtime/collector/camera_schedule.py",
+      "sha256": "778b1f7a96402caf47987a71dced35df8d1df76324c02f73a95c555ffde8fe30"
+    },
+    "actuator_graph.py": {
+      "source": "/mnt/public/juchuanqi/project/results/graspgen_accelerated_acceptance_20261112_01/runtime/collector/actuator_graph.py",
+      "sha256": "2d859cc7e2f9b69d6432166832bd84216e29f365466b24cab46f63301bebe571"
+    },
+    "fast_env_v3.py": {
+      "source": "/mnt/public/juchuanqi/project/results/graspgen_accelerated_acceptance_20261112_01/runtime/collector/fast_env_v3.py",
+      "sha256": "4e8646cc5c3bae01484cb687fcce976c3ff7708e4c139205cc5535d8c41d2132"
+    },
+    "fast_env_v4.py": {
+      "source": "/mnt/public/juchuanqi/project/results/graspgen_accelerated_acceptance_20261112_01/runtime/collector/fast_env_v4.py",
+      "sha256": "93a616c5008785cb33fefa472ec856c6c5cf8c16ca4c0d28806f9b77005de902"
+    },
+    "fast_env_v5.py": {
+      "source": "/mnt/public/juchuanqi/project/results/graspgen_accelerated_acceptance_20261112_01/runtime/collector/fast_env_v5.py",
+      "sha256": "f77bd4b70c85b902172016b034e133900b2413a51d08a45109c3484e713bc447"
+    },
+    "fast_env_v6.py": {
+      "source": "/mnt/public/juchuanqi/project/results/graspgen_accelerated_acceptance_20261112_01/runtime/collector/fast_env_v6.py",
+      "sha256": "1bc8c1966eb8af702dc37083949fafc5e9ed2fe83dd20d39a2aca2faa8bbe858"
+    },
+    "overlap.py": {
+      "source": "/mnt/public/juchuanqi/project/results/graspgen_accelerated_acceptance_20261112_01/overlap.py",
+      "sha256": "deaac93e4602399429003adf632113c7b1907eb99db351bf85c347933d8fa893"
+    }
+  },
+  "integration": "Extend current v2 environment; retain current COM v3 score, static evidence, geometry and validators."
+}

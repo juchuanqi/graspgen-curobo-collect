@@ -16,7 +16,7 @@ cd graspgen-curobo-collect
 
 `物体 mesh → 2048 点云 → GraspGen 生成及评分 → 几何筛选 → cuRobo 规划 → Isaac Lab / PhysX 实执行 → 接触与抬升保持评分 → 保存和校验`
 
-保留 480 Hz 物理、60 Hz 控制、每控制步 8 个物理子步、双路 256×256 RGB、120 控制步落稳、原始接触记录和当前成功判据。仿真位姿直接从 Isaac 读取，GraspGen 输入为 mesh 表面采样点。包含单环境常驻采集、四卡三环境并发、冷/热/并发测速，以及首回合预热和初态核查。
+保留 480 Hz 物理、60 Hz 控制、每控制步 8 个物理子步、双路 256×256 RGB、120 控制步落稳、原始接触记录和当前成功判据。仿真位姿直接从 Isaac 读取，GraspGen 输入为 mesh 表面采样点。包含单环境常驻采集、四卡三环境共享规划器及八卡八环境专属规划器并发、冷/热/并发测速，以及首回合预热和初态核查。
 
 本目录只交付代码、配置、Panda 模型和四种物体的几何资产。没有历史运行日志、图像、轨迹、实验结果或旧 GraspGen 候选。约 1 GB 的官方模型权重与 Python 环境单独使用；候选在同事自己的运行目录重新生成。
 
@@ -55,6 +55,10 @@ bash run.sh collect --objects all --episodes-per-object 10 --gpus 0,1
 # 四卡：前三张仿真，末张共享规划；四物品各30次，共120次。
 bash run.sh collect --objects all --episodes-per-object 30 --workers 3 --gpus 0,1,2,3
 
+# 八卡：每张卡一个长驻仿真和专属规划器，使用已有执行优化与关节提速。
+bash run.sh collect --objects all --episodes-per-object 32 --workers 8 \
+  --gpus 0,1,2,3,4,5,6,7 --execution-profile accelerated --arm-speed-profile recommended
+
 # 自动先验收2条；验收通过后才开始上述120次。
 bash run_long_batch.sh 0,1,2,3
 
@@ -62,9 +66,36 @@ bash run_long_batch.sh 0,1,2,3
 bash run.sh collect --objects all --episodes-per-object 30 --workers 3 --gpus 0,1,2,3 --dry-run
 ```
 
-`--gpus` 始终相对于当前 `CUDA_VISIBLE_DEVICES` 分配。默认只有一个仿真环境；多环境是独立进程，并且要求四卡。`--gui` 只用于一个环境。物品切换时重建仿真，同物品回合间复用环境与规划服务。`--seed` 控制初态采样；当前沿用各物品参考位置附近 XY ±2 mm、yaw ±8°的范围，位置总偏移不超过 ±15 mm。第一条使用该物品参考初态。
+`--gpus` 始终相对于当前 `CUDA_VISIBLE_DEVICES` 分配。默认只有一个仿真环境；多环境是独立进程，四卡最多三路共用一个规划器，八卡最多八路且每路有同卡专属规划器。GPU映射写入槽位账本，恢复拒绝改动。`--gui` 只用于一个环境。物品切换时重建仿真，同物品回合间复用环境与规划服务。`--seed` 控制默认初态采样：各物品参考位置附近 XY ±2 mm、yaw ±8°，位置总偏移不超过 ±15 mm，第一条使用参考初态。也可用 `coverage_plan.py` 生成四物体共 200 槽的显式分层清单，通过 `--plan-json` 输入并在每物体前 10 槽暂停检查；见[分批检查点](docs/RECOVERY.md#显式初态与分批检查点)。
+
+普通采集的 `--execution-profile` 默认是 `accelerated`：复用历史力传感器环形调度、接触 CUDA Graph、相机显式调度、原生隐式执行器 CUDA Graph，以及闭合几何/抬升 RPC 重叠；当前 COM v3 评分和规划前静止证据保持。CPU两路验证与采集重叠，最多四条等待，每路首条验证完成后通过公共门禁进入测量。原速/原执行对照分别指定 `--arm-speed-profile baseline --execution-profile baseline`；旧 benchmark/smoke 默认使用原执行配置。
 
 每个预定初态只做一次物理尝试，普通抓取失败保留，技术故障或初态核查失败会停止；不会补抓至成功。连续批次默认统计尝试完成情况，`--smoke` 还要求两条都通过抓取、初态与数据校验才返回成功。建议先完成 smoke 再扩大批次。
+
+可选关节速度配置（默认仍为原速度）：
+
+```bash
+bash run.sh collect --smoke --gpus 0 --arm-speed-profile recommended
+bash run.sh collect --objects all --episodes-per-object 30 --workers 3 --gpus 0,1,2,3 --arm-speed-profile recommended
+```
+
+`recommended` 将接近段速度/路径进度加速度设为 1.0 rad/s、5.0 rad/s²，持物抬升段为 0.3 rad/s、2.0 rad/s²；下降、离桌直线、闭合和保持沿用原设置。重定时后的路径仍经过完整几何复核。配置写入 `PLAN.json` 和每条 `METADATA.json`，独立验证按保存配置检查各阶段动作增量，无需再设置环境变量。`--arm-speed-profile baseline` 显式恢复原速度；命令行优先于实验用的 `ARM_SPEED_PROFILE` 环境变量。2026-11-11四物品各30条验收：方块、长条、圆柱各30/30成功，圆盘17/30；120条初态与完整数据校验均通过，但物理成功门槛未通过。独立 `collect` 保留原速度兼容默认值，使用提速档位需显式选择；新 `pipeline` 默认采用提速档位，见后文。圆盘6对同初态同候选诊断：原速度4/6、新速度3/6，暂不作普遍质量等价结论。
+
+## 夹爪对称朝向选择
+
+通过 `--grasp-symmetry near-first` 开启当前夹爪朝向感知的候选配对：
+
+```bash
+bash run.sh collect --smoke --gpus 0 --grasp-symmetry near-first
+# 只查看计划：
+bash run.sh collect --objects all --grasp-symmetry near-first --dry-run
+```
+
+对每个已转换到 TCP 坐标约定的候选，生成 `R' = R @ diag(-1,-1,1)`，保持 TCP 位置与接近轴 Z，交换两指方向。用实时物体位姿转换到世界坐标，再计算与当前实测夹爪的完整三维转角。N 个源候选得到 N 个近向和 N 个远向版本；16 个源候选即两组各 16 个，不额外调用模型。夹角相同优先保留原朝向。
+
+两组分别进行完整夹爪场景几何筛选，每组最多保留 50 个；随后对两组候选做批量 IK。完整规划优先近向组，组内沿用关节运动量排序；远向组作为剩余预算内的后备。两组共用最多 5 个完整规划候选，每个仍为 30 秒软预算，完整机械臂几何与自碰撞检查保持。此偏好减少的是目标朝向差，实际关节路程和轨迹转角仍须测量。
+
+`PLAN.json`、任务及回合元数据保存模式；`CANDIDATE_REPORT.json` 保存配对、夹角、IK 和规划顺序。派生候选有独立 `candidate_id`，保留父候选索引和模型分数，派生 `score` 为空。默认 `--grasp-symmetry off` 沿用原流程。该功能已做 CPU 回归，尚未进行新增物理抓取验收。
 
 ## 当前支持的物体
 
@@ -90,6 +121,8 @@ bash run.sh collect --objects all --episodes-per-object 30 --workers 3 --gpus 0,
 
 ## 导出 VLA 训练数据
 
+`collect` 保存原始 NPZ 轨迹和双相机 NPY，不包含 LeRobot 转换；`export` 将已有轨迹转换为训练数据包，`pipeline` 串起采集、导出和读取检查，并支持 `--data-only`。
+
 采集校验完成后，在独立的 LeRobot 0.4.4 环境里离线导出：
 
 ```bash
@@ -113,3 +146,13 @@ python3 -B tools/package.py --output /目标目录/graspgen_curobo_collect.tar.g
 ```
 
 本次迁移的验证边界见 [验证说明](docs/VALIDATION.md)。依赖与资产来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+基础数据验收可用 `bash run.sh pipeline --help`：固定采集 → 运动/静止证据校验 → 严格筛选 → 原生 LeRobot v3 导出 → 官方完整读取 → 短 ACT 训练。默认 4 种基础物体各 5 条，失败保留，不重试；详见 [验收说明](docs/VALIDATION.md)。
+
+2026-11-16 起，新 `pipeline` 批次默认采用已有 `recommended` 关节加速档位和 `accelerated` 执行优化。支持八卡八路专属规划器布局；恢复按登记配置继续，旧冻结批次保持原配置。独立 `collect` 的速度兼容默认值仍为原速度，八卡加速采集需显式选 `recommended`。当前四物体的32条接入检查及128条正式复测登记于 [P2目录](../results/graspgen_accelerated_p2_20261116_01/PREREGISTRATION.json)，结论以真实验收结果为准。
+
+P2 实测：接入检查32/32成功，正式125/128成功；三条失败均为细长物体135°朝向的稳持失败，原始记录保留。每物体八路首条验证后，四个有限测量窗口合计96槽、93成功，含在线验证7.650秒/成功条；完整采集含热身/切换/冷启动9.558秒/成功条。125条、71,302行严格导出和完整官方读回、20,160项独立统计及ACT100通过；扣除ACT的数据活跃总成本41.13秒/合格条。该批已知网格/固定初态结果见 [P2报告](../results/graspgen_accelerated_p2_20261116_01/REPORT.md)，与历史杯子/P1只作观测参考。后续优先优化CPU导出及回读；ACT检查不代表策略闭环能力。
+
+新批次支持 `bash run.sh pipeline --output /原目录 --resume` 继续固定槽位及后处理，并可用 `--data-only` 单独交付数据、`--resume --with-training` 补训练检查。仅确定发生在执行前的初始化资源故障有限重启；已完成和执行进度不明的槽位不会自动重抓。状态、互斥、封存和数据使用方式见 [恢复与交付说明](docs/RECOVERY.md)。
+
+2026-11-13 固定批次经一次初始化显存故障恢复后，20/20 条独立稳持确认通过，完成 16,836 行官方读回和 100 步 ACT 训练检查。结果、复现入口和资源恢复边界见 [基础管线验收](docs/PIPELINE_ACCEPTANCE_20261113.md)。

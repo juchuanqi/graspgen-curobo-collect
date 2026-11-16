@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import math
 from collections import Counter
 from pathlib import Path
@@ -9,6 +10,22 @@ from pathlib import Path
 import numpy as np
 
 from bridge import CAMERAS, TOOL_FILES, compare_pose, read, sha, write
+
+
+def verify_trust(source, metadata, runtime):
+    if metadata.get('success_contract', {}).get('version') != 'com_translation_pose_arc_v3':
+        raise ValueError('unverified_motion_version')
+    if (metadata.get('initial_static_audit') or {}).get('status') != 'passed':
+        raise ValueError('initial_static_not_passed')
+    path = runtime / 'validators/validate_episode.py'
+    spec = importlib.util.spec_from_file_location('_export_fresh_validator', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    report = module.validate(source)
+    if not (report['unified_motion_scoring'] and report['initial_static_status'] == 'passed'
+            and report['primary_success']):
+        raise ValueError('fresh_trust_validation_failed')
+    return report
 
 
 def main(args):
@@ -51,6 +68,14 @@ def main(args):
         metadata = read(matches[0])
         if read(source / "ENTRY.json") != entry:
             raise ValueError(f"ENTRY differs from run plan: {source}")
+        strict = not getattr(args, 'allow_legacy_unverified', False)
+        if strict:
+            try:
+                record['fresh_trust_validation'] = verify_trust(source, metadata, runtime)
+            except Exception as error:
+                record['exclusion'] = 'trust_validation_failed'
+                record['trust_error'] = str(error)
+                continue
         validations = [source / n for n in ("VALIDATION.json", "RAW_FORCE_VALIDATION.json")]
         if not (metadata["success"] is True and metadata["accepted"] is True and
                 metadata["reason"] == "stable_grasp_hold" and
@@ -95,6 +120,9 @@ def main(args):
                  "NATIVE_PHYSICS.json", "SOURCE_AT_LAUNCH.json", "VALIDATION.json", "RAW_FORCE_VALIDATION.json"]
         files += [f"cameras/{c}.npy" for c in CAMERAS]
         files += ["INITIAL_STATE_AUDIT.json"]
+        if strict:
+            files += ['INITIAL_STATIC_TRACE.npz', 'INITIAL_STATIC_AUDIT.json']
+            files += [str(p.relative_to(source)) for p in sorted((source / 'source_snapshot').glob('*.py'))]
         if (source / "RESET_READBACK.json").is_file():
             files.append("RESET_READBACK.json")
         selected.append(dict(export_episode_index=len(selected), source=str(source),
@@ -107,12 +135,14 @@ def main(args):
         record["selected"] = True
     inputs = [run / "PLAN.json", run / "RUN.json", runtime / "assets/MANIFEST.json",
               scene_config]
+    inputs += sorted((runtime / 'validators').glob('*.py'))
     result = dict(status="selected_before_export" if selected else "no_eligible_episodes",
                   source_run=str(run), runtime=str(runtime),
                   stage=stage_name, fixed_slots=len(stage["cases"]),
                   eligible_slots=sum(r["eligible"] for r in inspected),
                   selected_episodes=len(selected), per_object=dict(selected_counts),
                   role="engineering_format_pilot" if args.per_object else "validated_expert_export",
+                  static_and_motion_verified=not getattr(args, 'allow_legacy_unverified', False),
                   selection_policy="sorted object ID and fixed index; physical success, both validators, online audit, raw/cached initial pose; deduplicate measured starts; optional fixed per-object limit",
                   original_inputs_sha256={str(p): sha(p) for p in inputs},
                   episodes=selected, inspected_slots=inspected,
@@ -131,4 +161,6 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--stage")
     parser.add_argument("--per-object", type=int)
+    parser.add_argument('--allow-legacy-unverified', action='store_true',
+                        help='Historical format debugging only; does not qualify static or motion evidence')
     main(parser.parse_args())

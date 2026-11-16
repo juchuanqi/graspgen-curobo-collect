@@ -127,25 +127,30 @@ class PickupEnv(FirstPickupEnv):
         before = self._sim_step_counter
         old_lazy = self.scene.cfg.lazy_sensor_update
         old_render = self.cfg.sim.render_interval
+        self.initial_static_rows = []
         try:
             self._settle_minimal = bool(minimal)
             if minimal:
                 self.scene.cfg.lazy_sensor_update = True
                 self.cfg.sim.render_interval = 2**62
-            for _ in range(118 if minimal else 120):
+            for _ in range(89 if minimal else 0):
                 self.step(self.targets.clone())
         finally:
             self._settle_minimal = False
             self.scene.cfg.lazy_sensor_update = old_lazy
             self.cfg.sim.render_interval = old_render
-        if minimal:
-            # Two full controls provide16 contact samples; the entire saved
-            # initial eight-sample window and all force histories are current.
-            for _ in range(2):
-                self.step(self.targets.clone())
+        # A reference endpoint plus30 physical intervals are observed during
+        # the existing settle budget. No extra physics or object writes.
+        for index in range(31 if minimal else 120):
+            self.step(self.targets.clone())
+            if minimal or index >= 89:
+                row, _ = self.snapshot(capture_rgb=False)
+                keys = ('object_pose', 'contact_substep_object_pose_w', 'contact_substep_physics_tick',
+                        'contact_substep_sample_count', 'link_contact_peak_n')
+                self.initial_static_rows.append({key: np.array(row[key], copy=True) for key in keys})
         if self._sim_step_counter-before != 960:
             raise RuntimeError('Settle physics-step count changed')
-        return dict(controls=120, physics_steps=960, minimal_controls=118 if minimal else 0,
-                    full_controls=2 if minimal else 120,
+        return dict(controls=120, physics_steps=960, minimal_controls=89 if minimal else 0,
+                    full_controls=31 if minimal else 120, static_observation_controls=30,
                     final_contact_history_samples=8,
                     recorded_rgb_starts_after_settle=True)

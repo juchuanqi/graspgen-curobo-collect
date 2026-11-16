@@ -15,6 +15,7 @@ import time
 import traceback
 
 from common import HERE, OBJECTS, collection_plan, gpu_tokens, local_setting, make_plan, read, sha, write
+from runtime.collector import arm_speed, grasp_symmetry
 
 
 def interpreter(explicit, variable, fallback=None):
@@ -66,14 +67,19 @@ sys.exit(bool(missing) or bool(result['cpu_import_error']) or not result['python
 
 
 class Processes:
-    def __init__(self):
+    def __init__(self, lock_fd=None):
         self.children = []
+        self.lock_fd = lock_fd
 
     def start(self, command, environment, log):
+        from recovery import guarded_command
+        if self.lock_fd is not None:
+            command = guarded_command(command)
         stream = Path(log).open("x")
         try:
             child = subprocess.Popen(command, env=environment, stdout=stream,
                                      stderr=subprocess.STDOUT, start_new_session=True,
+                                     pass_fds=() if self.lock_fd is None else (self.lock_fd,),
                                      cwd=str(Path(log).resolve().parent))
         finally:
             stream.close()
@@ -173,7 +179,8 @@ def run_stage(stage, args, tokens, sim_python, planner_python, processes):
                 worker_id = f"{workload[0]['object_id']}_wave{wave_number:02d}_lane{lane}"
                 job = dict(stage=stage["name"], worker_id=worker_id,
                            persistent=stage["persistent"], cases=workload,
-                           candidate_root=str(args.candidate_root))
+                           candidate_root=str(args.candidate_root),
+                           grasp_symmetry=getattr(args,"grasp_symmetry","off"))
                 path = out / "jobs" / (worker_id + ".json")
                 write(path, job)
                 worker_output = out / "workers" / worker_id
@@ -240,11 +247,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--runtime", type=Path, default=HERE / "runtime")
-    parser.add_argument("--gpus", default="0", help="Logical GPU indices: 0; 0,1; or 0,1,2,3")
+    parser.add_argument("--gpus", default="0", help="One, two, four, or eight logical GPU indices within the allocation")
     parser.add_argument("--objects", default="all", help="all or comma-separated object IDs")
     parser.add_argument("--episodes-per-object", type=int, default=2)
-    parser.add_argument("--workers", type=int, default=1, help="Persistent simulation processes (1 to 3)")
+    parser.add_argument("--workers", type=int, default=1, help="Persistent simulation processes: up to 3 on four GPUs, up to 8 on eight GPUs")
+    parser.add_argument('--execution-profile', choices=('baseline', 'accelerated'),
+                        help='Normal collection defaults to existing accelerated runtime; original benchmark/smoke default to baseline')
     parser.add_argument("--seed", type=int, default=2026207000)
+    parser.add_argument('--plan-json', type=Path, help='Explicit frozen starts within the existing physics/attempt contract')
+    parser.add_argument('--stop-after-per-object', type=int, help='Checkpoint after this fixed-index prefix; resume without this option to continue')
+    parser.add_argument("--arm-speed-profile", choices=("baseline", "recommended"),
+                        help="Joint timing: baseline (default), or approach 1.0 / carry 0.3 rad/s")
+    parser.add_argument("--grasp-symmetry", choices=grasp_symmetry.MODES, default="off",
+                        help="near-first: pair each TCP pose with its local-Z 180-degree flip; prefer the closer orientation")
     parser.add_argument("--gui", action="store_true", help="Show Isaac Sim window (one worker)")
     parser.add_argument("--candidate-root", type=Path, default=HERE / "generated/candidates")
     parser.add_argument("--benchmark", action="store_true", help="Run original cold/warm/parallel timing comparison")
@@ -260,9 +275,25 @@ def main():
                         help="With --only parallel3: 1–32 consecutive episodes per worker per object (10 means 120 fixed slots)")
     parser.add_argument("--episode-timeout", type=float, default=1200.)
     parser.add_argument("--skip-validation", action="store_true")
+    parser.add_argument('--resume', action='store_true', help='Continue a run created by this recovery-enabled collector; use the original plan/options')
+    parser.add_argument('--initialization-retries', type=int, default=2,
+                        help='Extra startups only for proven pre-execution initialization resource failures (0–2)')
     args = parser.parse_args()
+    try:
+        speed = arm_speed.parse(args.arm_speed_profile) if args.arm_speed_profile else arm_speed.from_environment()
+    except ValueError as error:
+        parser.error(str(error))
+    os.environ["ARM_SPEED_PROFILE"] = speed.environment_value()
     if args.episode_timeout <= 0 or args.startup_timeout <= 0:
         parser.error("Timeouts must be positive")
+    if not 0 <= args.initialization_retries <= 2:
+        parser.error('--initialization-retries must be between 0 and 2')
+    if args.stop_after_per_object is not None and args.stop_after_per_object < 1:
+        parser.error('--stop-after-per-object must be positive')
+    if (args.plan_json or args.stop_after_per_object) and (args.benchmark or args.smoke):
+        parser.error('Explicit plans and checkpoints require normal collection')
+    if args.resume and (args.benchmark or args.smoke or args.output is None):
+        parser.error('--resume requires --output and a normal fixed collection plan')
     if args.smoke and (args.full or args.only):
         parser.error("--smoke cannot be combined with --full or --only")
     if args.smoke and args.skip_validation:
@@ -279,14 +310,31 @@ def main():
                 parser.error("Timing comparison options require --benchmark")
             objects = list(OBJECTS) if args.objects == "all" else args.objects.split(",")
             plan = collection_plan(objects, args.episodes_per_object, args.workers, args.seed)
+            if args.plan_json:
+                from coverage_plan import load_fixed_plan
+                plan = load_fixed_plan(args.plan_json, objects, args.episodes_per_object, args.workers, args.seed)
         tokens = gpu_tokens(args.gpus)
         lanes = max(s["lanes"] for s in plan["stages"])
-        if lanes > 1 and len(args.gpus.split(",")) != 4:
-            parser.error("Multiple workers require four GPUs; use --workers 1 for one/two GPUs")
+        selected = len(args.gpus.split(','))
+        if lanes > 1 and selected not in (4, 8):
+            parser.error("Multiple workers require four or eight GPUs")
+        from common import device_layout
+        device_layout(tokens, lanes)
+        if (args.benchmark or args.smoke) and selected == 8:
+            parser.error('Eight-GPU layout requires normal fixed collection')
         if args.gui and lanes > 1:
             parser.error("--gui requires one worker")
     except ValueError as error:
         parser.error(str(error))
+    plan["arm_speed_profile"] = speed.describe()
+    plan['execution_profile'] = args.execution_profile or (
+        'baseline' if args.benchmark or args.smoke else 'accelerated')
+    plan["grasp_symmetry"] = args.grasp_symmetry
+    plan["symmetry_candidate_budget"] = dict(
+        derived_orientations_per_source=2 if args.grasp_symmetry=="near-first" else 1,
+        scene_qualified_per_group=50,
+        scene_qualified_total=100 if args.grasp_symmetry=="near-first" else 50,
+        full_planned_total=5, planning_wall_s_per_candidate=30)
     if args.dry_run:
         print(json.dumps(plan, ensure_ascii=False, indent=2))
         return
@@ -304,9 +352,18 @@ def main():
                     "--runtime", str(args.runtime), "--candidate-root", str(args.candidate_root),
                     "--objects", ",".join(plan["objects"])], check=True)
     args.output = (args.output or HERE / "outputs" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")).resolve()
+    if not args.benchmark and not args.smoke:
+        from resumable_collect import run_collection
+        run_collection(plan, args, tokens, checks, sim_python, planner_python)
+        from report import summarize
+        print(json.dumps(summarize(args.output), ensure_ascii=False, indent=2), flush=True)
+        print('Slot ledger: ' + str(args.output / 'SLOTS.json'), flush=True)
+        return
     args.output.mkdir(parents=True, exist_ok=False)
     write(args.output / "PLAN.json", plan)
     write(args.output / "ENVIRONMENT.json", dict(checks=checks, gpu_tokens=tokens,
+          arm_speed_profile=speed.describe(),
+          grasp_symmetry=args.grasp_symmetry,
           inherited_cuda_visible_devices=os.environ.get("CUDA_VISIBLE_DEVICES"),
           bundle_sha256={p.name: sha(p) for p in HERE.glob("*.py")}))
     print(f"Output: {args.output}\nFixed attempt slots: {plan['total_attempt_slots']}; "

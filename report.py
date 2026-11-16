@@ -37,6 +37,7 @@ def summarize(output):
     output = Path(output)
     plan = read(output / "PLAN.json")
     run = read(output / "RUN.json")
+    timing_complete = run.get('timing_complete', True)
     rows, stages, performance = [], [], {}
     for stage in plan["stages"]:
         directory = output / stage["name"]
@@ -55,6 +56,10 @@ def summarize(output):
             row = dict(stage=stage["name"], case_id=metadata["case_id"], object_id=metadata["object_id"],
                        success=metadata["success"], validated=validated, initial_state_audit_status=audit_status,
                        reason=metadata["reason"],
+                       initial_static_status=(metadata.get('initial_static_audit') or {}).get('status', 'unknown'),
+                       grasp_initialization_eligible=(
+                           (metadata.get('initial_static_audit') or {}).get('status') == 'passed'
+                           and audit_status == 'passed' and metadata['reason'] != 'invalid_initial_geometry'),
                        actions=metadata["actions"], reused_environment=metadata["reused_environment"],
                        initialization_s=metadata["initialization_s"], episode_wall_s=metadata["episode_wall_s"],
                        planning_s=timing["planning"], planner_queue_s=metadata["queue_wait_s"],
@@ -73,6 +78,13 @@ def summarize(output):
             stage=stage["name"], status=stage_receipt.get("status", "not_started"),
             planned_slots=len(stage["cases"]), saved_slots=len(stage_rows),
             missing_slots=len(stage["cases"]) - len(stage_rows),
+            initial_static_ineligible=sum(r['initial_static_status'] == 'ineligible' for r in stage_rows),
+            initial_static_unknown=sum(r['initial_static_status'] == 'unknown' for r in stage_rows),
+            valid_grasp_denominator=sum(r['grasp_initialization_eligible'] for r in stage_rows),
+            static_qualified_success_fraction=(
+                sum(r['success'] and r['validated'] and r['grasp_initialization_eligible'] for r in stage_rows)
+                / sum(r['grasp_initialization_eligible'] for r in stage_rows)
+                if any(r['grasp_initialization_eligible'] for r in stage_rows) else None),
             scored_successes=successes, validated_successes=accepted,
             requested_state_validated_successes=requested_accepted,
             requested_state_validated_successes_per_collection_hour=requested_accepted * 3600 / wall if wall else None,
@@ -96,6 +108,11 @@ def summarize(output):
                                    successes=sum(r["object_id"] == name and r["success"] for r in stage_rows))
                         for name in plan["objects"]},
         ))
+        if not timing_complete:
+            for key in ('requested_state_validated_successes_per_collection_hour',
+                        'completed_slots_per_hour', 'scored_successes_per_hour',
+                        'validated_successes_per_collection_hour', 'equivalent_collection_minutes_per_scored_success'):
+                stages[-1][key] = None
     paired = []
     row_lookup = {(r["stage"], r["case_id"]): r for r in rows}
     for case in sorted({r["case_id"] for r in rows if r["stage"] == "cold1"}):
@@ -124,6 +141,11 @@ def summarize(output):
                   requested_state_validated_successful_slots_per_total_hour=sum(
                       s["requested_state_validated_successes"] for s in stages) * 3600 / run["total_wall_s"],
                   scope=plan.get("scope", "Fixed known-geometry timing comparison; paired repetitions are duplicates"))
+    result['timing_complete'] = timing_complete
+    result['time_semantics'] = run.get('time_semantics', 'original collection and validation clocks')
+    if not timing_complete:
+        result['validated_successful_slots_per_total_hour'] = None
+        result['requested_state_validated_successful_slots_per_total_hour'] = None
     write(output / "SUMMARY.json", result)
     write(output / "EPISODES.json", rows)
     with (output / "episodes.csv").open("w", newline="") as stream:
@@ -142,7 +164,8 @@ def summarize(output):
                      f"{number(stage['scored_successes_per_hour'])} | "
                      f"{number(stage['p50_control_s'],3)}/{number(stage['p90_control_s'],3)} |")
     lines.extend(["", "批次时间包含规划服务和全部仿真进程的启动、执行、原始数据保存及退出。",
-                  "CPU数据验证在采集后单独计时，未导出LeRobot或训练视频；SUMMARY.json同时报告包含验证的整体吞吐。",
+                  ("恢复入口的批次时间还包含逐槽CPU校验，累计各次监督进程的运行时间，停机等待另列。"
+                   if run.get('slot_ledger') else "CPU数据验证在采集后单独计时，SUMMARY.json同时报告包含验证的整体吞吐。"),
                   "", f"配对初态检查：{len(paired)} 对，未匹配/缺失 {result['paired_initial_state_mismatches']} 对。",
                   "初态阈值为关节1e-5 rad、物体位置1e-5 m、旋转1e-4 rad；若不匹配，不能只将差异归因于启动复用。",
                   "", f"按案例ID去重的物理验证成功数：{len(accepted_unique)}，不代表实际初态去重数。",
@@ -151,6 +174,8 @@ def summarize(output):
                   "测速模式间重复案例不能当成独立新样本。",
                   "", "查看 episodes.csv/EPISODES.json 获得逐物体、逐回合、初始化、落稳、规划排队与执行耗时。",
                   "共享规划服务的排队计入每条规划时间；环境数量是独立进程数，没有声称同进程多环境向量化。"])
+    if not timing_complete:
+        lines.extend(['', '存在被强制终止而缺少结束时间的运行；累计时间仅为下界，不报告吞吐率。'])
     lines.extend(["", "| 模式 | 指定初态且数据验证成功/计划 | 对应条/采集小时 | 复用回合均值秒 | 规划排队均值秒 |",
                   "|---|---:|---:|---:|---:|"])
     for stage in stages:

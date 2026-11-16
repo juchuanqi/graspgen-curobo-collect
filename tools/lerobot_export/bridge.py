@@ -9,7 +9,8 @@ from pathlib import Path
 import numpy as np
 
 CAMERAS = ("base_camera", "wrist_camera")
-TOOL_FILES = ("bridge.py", "select_sources.py", "export_lerobot.py", "audit_lerobot.py", "run.py")
+TOOL_FILES = ("bridge.py", "select_sources.py", "export_lerobot.py", "audit_lerobot.py", "run.py",
+              "stable_statistics.py", "audit_statistics.py")
 
 
 def read(path):
