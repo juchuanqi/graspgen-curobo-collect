@@ -172,6 +172,10 @@ class Pipeline:
         if (selection.get('static_and_motion_verified') is not True
                 or audit.get('status') != 'passed' or audit.get('statistics', {}).get('status') != 'passed'):
             raise ValueError('Qualified delivery requires strict selection, full readback and independent statistics')
+        if (directory / 'portable/SHARDS.json').exists():
+            sys.path.insert(0, str(self.source / 'tools/lerobot_export'))
+            from delivery import validate_delivery
+            validate_delivery(directory / 'portable', directory / 'AUDIT.json')
 
     def check_training(self, directory):
         result = read(directory / 'RESULT.json')
@@ -206,7 +210,8 @@ class Pipeline:
             python = self.args['lerobot_python']
             self.stage('export_and_readback', 'export', lambda work: [sys.executable, '-B',
                 str(self.source / 'tools/lerobot_export/run.py'), '--run', str(self.output / 'raw'),
-                '--runtime', str(self.source / 'runtime'), '--output', str(work), '--python', python],
+                '--runtime', str(self.source / 'runtime'), '--output', str(work), '--python', python,
+                '--workers', str(self.args.get('export_workers', 1))],
                 self.check_export)
             self.receipt['data_status'] = 'passed'; self.save()
             if not self.args['data_only']:
@@ -247,6 +252,8 @@ def main():
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--gpus')
     parser.add_argument('--workers', type=int)
+    parser.add_argument('--export-workers', type=int,
+                        help='1: single package (default); >1: parallel audited packages per object')
     parser.add_argument('--execution-profile', choices=('baseline', 'accelerated'),
                         help='New runs default to the existing accelerated sensor/contact/camera/actuator runtime')
     parser.add_argument('--arm-speed-profile', choices=('baseline', 'recommended'),
@@ -267,6 +274,8 @@ def main():
     args = parser.parse_args()
     if args.stop_after_per_object is not None and args.stop_after_per_object < 1:
         parser.error('--stop-after-per-object must be positive')
+    if args.export_workers is not None and args.export_workers < 1:
+        parser.error('--export-workers must be positive')
     output = args.output.resolve()
     if args.resume:
         receipt = read(output / 'PIPELINE.json')
@@ -283,7 +292,8 @@ def main():
             if key in {'output', 'resume', 'data_only', 'stop_after_per_object'} or value is None:
                 continue
             value = str(value.resolve()) if isinstance(value, Path) else value
-            registered = values.get(key, 'baseline' if key in {'arm_speed_profile', 'execution_profile'} else None)
+            registered = values.get(key, 1 if key == 'export_workers' else
+                                    'baseline' if key in {'arm_speed_profile', 'execution_profile'} else None)
             if registered != value:
                 parser.error(f'--{key.replace("_", "-")} differs from the registered run')
         if args.data_only is not None:
@@ -291,7 +301,7 @@ def main():
         values['stop_after_per_object'] = args.stop_after_per_object
         receipt['arguments'] = values
     else:
-        values = dict(gpus='0', workers=1, arm_speed_profile='recommended', execution_profile='accelerated',
+        values = dict(gpus='0', workers=1, export_workers=1, arm_speed_profile='recommended', execution_profile='accelerated',
             objects='all', episodes_per_object=5, seed=2026111300,
             candidate_root=str(ROOT / 'generated/candidates'), runtime=str(ROOT / 'runtime'),
             lerobot_python=None, train_steps=100, initialization_retries=2, data_only=False,

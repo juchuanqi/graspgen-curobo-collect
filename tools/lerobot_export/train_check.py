@@ -10,12 +10,12 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from lerobot.configs.types import FeatureType
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import dataset_to_policy_features
 from lerobot.policies.act.configuration_act import ACTConfig
 from lerobot.policies.act.modeling_act import ACTPolicy
 from lerobot.policies.factory import make_pre_post_processors
 from bridge import read, sha, write
+from delivery import load_training_data, validate_delivery
 
 
 def main(args):
@@ -23,29 +23,24 @@ def main(args):
         raise ValueError('steps must be positive')
     if args.output.exists():
         raise FileExistsError(args.output)
-    audit = read(args.audit)
-    if audit['status'] != 'passed':
-        raise ValueError('Official exact readback must pass before training')
-    selection = read(args.portable / 'SELECTION.json')
-    if selection.get('static_and_motion_verified') is not True:
-        raise ValueError('Training check requires static and motion qualified source data')
+    validate_delivery(args.portable, args.audit)
     started = time.monotonic()
     args.output.mkdir(parents=True)
     torch.set_num_threads(2)
     torch.manual_seed(20261113)
     np.random.seed(20261113)
     chunk = 16
-    dataset = LeRobotDataset('local/graspgen_curobo_panda', root=args.portable / 'dataset',
+    dataset, stats, schema = load_training_data(args.portable,
                              delta_timestamps={'action': [i / 60 for i in range(chunk)]})
-    features = dataset_to_policy_features(dataset.meta.features)
+    features = dataset_to_policy_features(schema)
     keys = ['observation.state', 'observation.images.base_camera', 'observation.images.wrist_camera']
     config = ACTConfig(input_features={k: features[k] for k in keys},
-        output_features={'action': features['action']}, device='cuda', push_to_hub=False,
+        output_features={'action': features['action']}, device=args.device, push_to_hub=False,
         pretrained_backbone_weights=None, chunk_size=chunk, n_action_steps=chunk,
         dim_model=128, n_heads=4, dim_feedforward=512, n_encoder_layers=2,
         n_decoder_layers=1, n_vae_encoder_layers=2)
-    policy = ACTPolicy(config).to('cuda').train()
-    preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=dataset.meta.stats)
+    policy = ACTPolicy(config).to(args.device).train()
+    preprocessor, postprocessor = make_pre_post_processors(config, dataset_stats=stats)
     optimizer = torch.optim.AdamW(policy.get_optim_params(), lr=1e-4)
     loader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=0,
                         generator=torch.Generator().manual_seed(20261113))
@@ -53,7 +48,8 @@ def main(args):
     iterator = iter(loader)
     metrics = []
     # Inspect an actual episode boundary, including LeRobot's official padding.
-    last_index = int(dataset.meta.episodes[0]['dataset_to_index']) - 1
+    first = dataset._datasets[0] if hasattr(dataset, '_datasets') else dataset
+    last_index = int(first.meta.episodes[0]['dataset_to_index']) - 1
     boundary = dataset[last_index]
     assert boundary['action_is_pad'].shape == (chunk,)
     assert not boundary['action_is_pad'][0] and boundary['action_is_pad'][1:].all()
@@ -102,4 +98,5 @@ if __name__ == '__main__':
     parser.add_argument('--audit', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--steps', type=int, default=100)
+    parser.add_argument('--device', choices=('cuda', 'cpu'), default='cuda')
     main(parser.parse_args())

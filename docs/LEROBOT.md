@@ -17,9 +17,37 @@ bash run.sh export --run outputs/采集目录 --output outputs/导出目录 \
 
 也可以设 `LEROBOT_PYTHON` 代替 `--python`。可以用 `--per-object 1` 小批试导。普通采集和 smoke 自动选择唯一阶段；如果来源是多阶段 benchmark，需指定 `--stage parallel3` 等阶段名称。若采集使用自定义 runtime，导出时传同一 `--runtime`。
 
+使用 `--workers 4` 开启并行分片：先对整批运行一次原严格筛选和去重，再按物体分片，最多同时处理 4 包。每个非空物体对应一包，`workers` 控制并发上限，不是分片条数。没有合格示范的物体仍在全局排除清单中，不生成空训练包。每包调用原导出器和审计器，重新从 0 编排回合索引，并完成官方加载器全量读回、终帧、padding 和独立统计。
+
+```bash
+bash run.sh export --run outputs/采集目录 --output outputs/分片导出目录 \
+  --workers 4 --python .venv-lerobot/bin/python
+```
+
+分片模式的 `portable/SHARDS.json` 保存相对包路径、逐包选择/导出/审计回执哈希和总条数；父目录 `AUDIT.json` 只有在各包均通过且合集恰好等于整批选择结果时才发布。数据路径为 `portable/shards/<物体>/dataset`；终帧及物理证据在各包的 `sidecars/`。整体移动 portable 不影响内部路径。导出失败保留日志和部分文件；重跑使用新目录。pipeline 已封存的完整导出可恢复复用，尚未完成的后处理重新执行，不自动复用未封存的单个分片。
+
+四物体一起训练时使用 `MultiLeRobotDataset`，并向官方预处理器传入 `data.stats`，不要只使用其中一包的统计：
+
+```python
+import json
+from pathlib import Path
+from lerobot.datasets.lerobot_dataset import MultiLeRobotDataset
+
+portable = Path('/absolute/path/to/portable')
+manifest = json.loads((portable / 'SHARDS.json').read_text())
+data = MultiLeRobotDataset(
+    repo_ids=[f"{s['object_id']}/dataset" for s in manifest['shards']],
+    root=portable / 'shards',
+    delta_timestamps={'action': [i / 60 for i in range(16)]},
+)
+stats = data.stats
+```
+
+项目 `train_check.py --portable <portable> --audit <AUDIT.json> --output <新训练目录>` 自动识别单包或分片。`pipeline --export-workers 4` 也会接入联合读取；默认仍为单包。pipeline 的导出并发登记后固定，恢复沿用冻结配置。训练检查默认使用 CUDA，单独调试可用 `--device cpu`。
+
 命令按固定计划检查每个槽位：要求物理抓取成功、两种原始数据校验通过、在线初态校验通过、规划前静止和完整稳持证据通过，且从原始记录重算的 PhysX 和缓存初态与计划相符。选择时按实测物体位姿和关节位置去重；失败或排除的槽仍列在 `SELECTION.json` 中。未启用原始校验的批次不能导出。历史记录缺少当前证据时不会自动获得资格；`--allow-legacy-unverified` 只供历史格式调试，不能通过当前 ACT 检查。
 
-退出码为 0 时，训练数据在 `portable/dataset`，`AUDIT.json` 为 `passed`。读回会核对每行动作、状态、任务和时序，以及双路图像的逐像素一致性、终帧和回合边界。完整的原始轨迹、校验报告和终帧保存在 `portable/sidecars`；`EXPORT_MANIFEST.json` 记录来源、格式和字段映射。训练只需数据集目录；重新对照原始记录需保留原始采集批次。原始批次、导出数据和缓存都需要磁盘空间，建议先用小批估算。命令失败时查看输出目录里的阶段日志，重跑用新目录。
+退出码为 0 时，默认单包训练数据在 `portable/dataset`，`AUDIT.json` 为 `passed`。读回会核对每行动作、状态、任务和时序，以及双路图像的逐像素一致性、终帧和回合边界。单包的完整原始轨迹、校验报告和终帧保存在 `portable/sidecars`；`EXPORT_MANIFEST.json` 记录来源、格式和字段映射。训练只需数据集目录；重新对照原始记录需保留原始采集批次。原始批次、导出数据和缓存都需要磁盘空间，建议先用小批估算。命令失败时查看输出目录里的阶段日志，重跑用新目录。
 
 | 训练字段 | 含义 |
 | --- | --- |

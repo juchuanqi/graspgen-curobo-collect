@@ -10,7 +10,7 @@ import numpy as np
 
 CAMERAS = ("base_camera", "wrist_camera")
 TOOL_FILES = ("bridge.py", "select_sources.py", "export_lerobot.py", "audit_lerobot.py", "run.py",
-              "stable_statistics.py", "audit_statistics.py")
+              "stable_statistics.py", "audit_statistics.py", "sharded_export.py", "delivery.py")
 
 
 def read(path):

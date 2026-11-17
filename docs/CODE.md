@@ -23,6 +23,8 @@
 | `runtime/assets/` / `runtime/robot/` | 物体、Panda USD / URDF 与碰撞模型 |
 | `tools/pipeline.py` / `tools/recoverable_pipeline.py` | 冻结源码、采集、严格导出/读回及可选 ACT 检查；后处理阶段可恢复与复用 |
 | `tools/guarded_process.py` | Linux 父进程死亡保护与继承锁，防止恢复时重叠执行 |
+| `tools/lerobot_export/sharded_export.py` | 全局筛选后按物体并行导出与完整读回，验证分片合集 |
+| `tools/lerobot_export/delivery.py` | 分片回执与相对路径验证、单包/多包统一训练加载和统计 |
 
 ## 坐标和执行约定
 
