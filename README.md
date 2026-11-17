@@ -72,6 +72,8 @@ bash run.sh collect --objects all --episodes-per-object 30 --workers 3 --gpus 0,
 
 每个预定初态只做一次物理尝试，普通抓取失败保留，技术故障或初态核查失败会停止；不会补抓至成功。连续批次默认统计尝试完成情况，`--smoke` 还要求两条都通过抓取、初态与数据校验才返回成功。建议先完成 smoke 再扩大批次。
 
+正式采集和 pipeline 登记前，会在 CPU 上检查整批请求的生成位姿和落稳位姿，覆盖完整机械臂、夹指、物体、桌面及障碍物。任一初态未通过既有几何标准即拒绝整批，不创建实验目录、不启动模拟器，也不自动筛掉或重采样该槽。pipeline 保存 `INITIAL_GEOMETRY_PREFLIGHT.json`；直接采集保存到 `ENVIRONMENT.json` 的 `checks.initial_geometry`。`--dry-run` 仅打印计划；实际落稳后的位姿、静止和几何核查仍保留。原始默认细长条带墙初态会被拒绝，须先显式设计有效初态。
+
 可选关节速度配置（默认仍为原速度）：
 
 ```bash

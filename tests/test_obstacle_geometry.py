@@ -94,8 +94,8 @@ class ObstacleGeometryTests(unittest.TestCase):
                              table_pose=[0, 0, 0, 1, 0, 0, 0],
                              table_shape_local_pose=[0, 0, 0, 1, 0, 0, 0],
                              table_shape_half_size=[.6, .6, .025], object_parts=[])
-        self.assertEqual(planner.build_world(planner.scene, remove_object=True)['cuboid']['wall']['dims'],
-                         [.02, .3, .22])
+        np.testing.assert_allclose(planner.build_world(planner.scene, remove_object=True)['cuboid']['wall']['dims'],
+                                   [.032, .312, .232])
         planner.self_valid = lambda *args: {'valid': True}
         with tempfile.TemporaryDirectory() as tmp:
             planner.output = Path(tmp)

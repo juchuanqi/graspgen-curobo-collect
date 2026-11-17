@@ -32,6 +32,7 @@ from geometry.primitives import pose_matrix, part_matrix
 from target_provider import screen_scene_candidates
 import arm_speed
 import grasp_symmetry
+import planning_clearance
 
 SPEED_PROFILE = arm_speed.from_environment()
 
@@ -102,9 +103,9 @@ class Planner:
 
     def build_world(self, scene, remove_object=False):
         table = self.base_inverse @ pose_matrix(scene['table_pose']) @ pose_matrix(scene['table_shape_local_pose'])
-        world = {'cuboid': {'table': {'dims': (2*np.asarray(scene['table_shape_half_size'])).tolist(), 'pose': pose_list(table)}}}
+        world = {'cuboid': {'table': {'dims': (2*np.asarray(scene['table_shape_half_size']) + 2*planning_clearance.TABLE_M).tolist(), 'pose': pose_list(table)}}}
         for obstacle in scene.get('obstacles', []):
-            world['cuboid'][obstacle['name']] = {'dims': obstacle['dims'], 'pose': pose_list(self.base_inverse@pose_matrix(obstacle['pose']))}
+            world['cuboid'][obstacle['name']] = {'dims': (np.asarray(obstacle['dims']) + 2*planning_clearance.OBSTACLE_M).tolist(), 'pose': pose_list(self.base_inverse@pose_matrix(obstacle['pose']))}
         if not remove_object:
             for i, part in enumerate(scene['object_parts']):
                 dims = part['size'] if part['shape']=='box' else [2*part['radius'], 2*part['radius'], part['length']]
@@ -133,6 +134,7 @@ class Planner:
             'primitive_world_cylinders': 'conservative axis-aligned local enclosing cuboids; exact independent checker retains cylinder64 circumscription',
             'optimizer_disabled_world_links': [],
             'optimizer_enabled_finger_world_links': FINGERS,
+            'execution_planning_clearance_m': planning_clearance.geometry_kwargs(),
             'finger_world_representation': 'cuRobo native spheres with the configured 2mm collision buffer; exact deployed URDF finger boxes checked independently',
             'target_contact_policy': 'select keeps the target in the world without contact exemptions; lift removes only the grasped target from the world and checks its full attachment, retaining table and registered obstacles',
             'independent_world_pairs': 'all complete fingers/arm/palm vs entire target/table/registered obstacles; full held target vs table/registered obstacles',
@@ -216,7 +218,7 @@ class Planner:
         exact_path=path if independent_fingers is None else np.c_[path,np.repeat(independent_fingers[None],len(path),axis=0)]
         exact = check_robot_path(exact_path, opening, pose_matrix(self.scene['object_pose']), self.scene['object_id'],
                                  base_pose=self.base, allow_pad_contact=allow_pad,
-                                 obstacles=self.scene.get('obstacles', []), **kwargs)
+                                 obstacles=self.scene.get('obstacles', []), **planning_clearance.geometry_kwargs(), **kwargs)
         check_deadline(deadline, label + ":after_geometry")
         own = self.self_valid(path, opening, independent_fingers)
         check_deadline(deadline, label + ":after_self_collision")

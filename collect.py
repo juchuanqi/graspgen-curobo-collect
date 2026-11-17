@@ -346,7 +346,10 @@ def main():
     args.candidate_root = args.candidate_root.resolve()
     sim_python = interpreter(args.sim_python, "SIM_PYTHON")
     planner_python = interpreter(args.planner_python, "PLANNER_PYTHON")
+    from initial_geometry import preflight
+    initial_geometry = preflight(plan, args.runtime, args.obstacle, planner_python)
     checks = check_environment(sim_python, planner_python, args.runtime)
+    checks['initial_geometry'] = initial_geometry
     if shutil.which("nvidia-smi") is None:
         raise RuntimeError("nvidia-smi unavailable; use a GPU-enabled platform job")
     if args.check:
