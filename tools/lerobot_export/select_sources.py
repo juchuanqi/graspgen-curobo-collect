@@ -4,12 +4,15 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import math
+import sys
 from collections import Counter
 from pathlib import Path
 
 import numpy as np
 
 from bridge import CAMERAS, TOOL_FILES, compare_pose, read, sha, write
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from runtime.collector.obstacle_scene import planner_obstacles, verify_obstacle_scene
 
 
 def verify_trust(source, metadata, runtime):
@@ -39,6 +42,8 @@ def main(args):
     if receipt.get("status") != "completed" or receipt.get("validation_requested") is not True:
         raise ValueError("Export requires a completed run with data validation enabled")
     plan = read(run / "PLAN.json")
+    obstacle = plan.get('obstacle', 'none')
+    planner_obstacles(obstacle)
     if (plan.get("control_hz"), plan.get("rgb_hz"), plan.get("camera_count"), plan.get("camera_resolution")) != (
         60, 60, 2, [256, 256]
     ):
@@ -68,6 +73,11 @@ def main(args):
         metadata = read(matches[0])
         if read(source / "ENTRY.json") != entry:
             raise ValueError(f"ENTRY differs from run plan: {source}")
+        try:
+            verify_obstacle_scene(obstacle, read(source / 'SCENE.json'))
+        except (ValueError, OSError) as error:
+            record.update(exclusion='obstacle_scene_mismatch', obstacle_error=str(error))
+            continue
         strict = not getattr(args, 'allow_legacy_unverified', False)
         if strict:
             try:
@@ -128,6 +138,7 @@ def main(args):
         selected.append(dict(export_episode_index=len(selected), source=str(source),
                              stage=stage_name, case_id=entry["case_id"], object_id=entry["object_id"],
                              scene_seed=entry["scene_seed"], length=metadata["actions"],
+                             obstacle_mode=obstacle,
                              task="Pick up the object and hold it above the table.",
                              expected_initial_pose=expected, initial_state_checks=checks,
                              source_sha256={n: sha(source / n) for n in files}))
@@ -136,14 +147,16 @@ def main(args):
     inputs = [run / "PLAN.json", run / "RUN.json", runtime / "assets/MANIFEST.json",
               scene_config]
     inputs += sorted((runtime / 'validators').glob('*.py'))
+    inputs += [Path(__file__).resolve().parents[2] / 'runtime/collector/obstacle_scene.py']
     result = dict(status="selected_before_export" if selected else "no_eligible_episodes",
                   source_run=str(run), runtime=str(runtime),
                   stage=stage_name, fixed_slots=len(stage["cases"]),
+                  obstacle_mode=obstacle,
                   eligible_slots=sum(r["eligible"] for r in inspected),
                   selected_episodes=len(selected), per_object=dict(selected_counts),
                   role="engineering_format_pilot" if args.per_object else "validated_expert_export",
                   static_and_motion_verified=not getattr(args, 'allow_legacy_unverified', False),
-                  selection_policy="sorted object ID and fixed index; physical success, both validators, online audit, raw/cached initial pose; deduplicate measured starts; optional fixed per-object limit",
+                  selection_policy="sorted object ID and fixed index; registered obstacle scene, physical success, both validators, online audit, raw/cached initial pose; deduplicate measured starts; optional fixed per-object limit",
                   original_inputs_sha256={str(p): sha(p) for p in inputs},
                   episodes=selected, inspected_slots=inspected,
                   tool_sha256={name: sha(Path(__file__).parent / name) for name in TOOL_FILES},

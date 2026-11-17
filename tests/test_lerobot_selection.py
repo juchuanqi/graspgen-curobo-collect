@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools/lerobot_export"))
 from bridge import CAMERAS, read, write
 from select_sources import main as select, verify_trust
+from runtime.collector.obstacle_scene import planner_obstacles
 
 
 class LeRobotSelectionTests(unittest.TestCase):
@@ -64,6 +65,27 @@ class LeRobotSelectionTests(unittest.TestCase):
                 None, "duplicate_measured_start", "requested_initial_state_mismatch",
                 "online_initial_audit_missing_or_failed", "missing_fixed_slot",
             ])
+            # Reproduce the historical bug: PLAN requests a wall but every
+            # recorded scene is clear. Even legacy format mode must reject it.
+            registered = read(run / 'PLAN.json')
+            registered['obstacle'] = 'wall'
+            write(run / 'PLAN.json', registered)
+            args.output = run / 'mismatched_selection.json'
+            with self.assertRaisesRegex(ValueError, 'No eligible episodes'):
+                select(args)
+            rejected = read(args.output)
+            self.assertEqual(rejected['fixed_slots'], 5)
+            self.assertEqual(rejected['selected_episodes'], 0)
+            self.assertEqual([r['exclusion'] for r in rejected['inspected_slots']],
+                             ['obstacle_scene_mismatch'] * 4 + ['missing_fixed_slot'])
+            source = Path(result['episodes'][0]['source'])
+            write(source / 'SCENE.json', dict(obstacle_mode='wall', obstacles=planner_obstacles('wall')))
+            args.output = run / 'wall_selection.json'
+            select(args)
+            selected = read(args.output)
+            self.assertEqual(selected['selected_episodes'], 1)
+            self.assertEqual(selected['obstacle_mode'], 'wall')
+            self.assertEqual(selected['episodes'][0]['obstacle_mode'], 'wall')
 
     def test_selector_rejects_run_without_validation(self):
         with tempfile.TemporaryDirectory() as tmp:

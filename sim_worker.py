@@ -15,6 +15,14 @@ from types import SimpleNamespace
 from common import PlannerClient, read, sha, write
 from initial_state import install_reset_guard
 from recovery import durable_write, initialization_resource_error
+from runtime.collector.obstacle_scene import planner_obstacles
+
+
+def create_environment(env_type, cfg, first, asset, job):
+    mode = job.get('obstacle', 'none')
+    planner_obstacles(mode)  # Reject unknown modes before spawning the environment.
+    return env_type(cfg, object_id=first['object_id'], asset=asset,
+                    scenario='wall' if mode == 'wall' else 'clear', occlusion='none')
 
 
 def episode_options(runtime, output, job, index):
@@ -72,7 +80,7 @@ def main():
         cfg = PickupCfg()
         cfg.sim.device = args.device
         cfg.seed = int(first["scene_seed"])
-        env = PickupEnv(cfg, object_id=first["object_id"], asset=asset, occlusion="none")
+        env = create_environment(PickupEnv, cfg, first, asset, job)
         if accelerated:
             env.configure_sensors('ring')
             contact_setup = env.configure_contacts('graph')

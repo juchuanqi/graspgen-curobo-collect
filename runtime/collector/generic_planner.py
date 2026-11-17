@@ -132,7 +132,7 @@ class Planner:
             'complete_target_parts': len(scene['object_parts']),
             'primitive_world_cylinders': 'conservative axis-aligned local enclosing cuboids; exact independent checker retains cylinder64 circumscription',
             'optimizer_disabled_world_links': FINGERS,
-            'restored_world_pairs': 'all complete fingers/arm/palm vs entire target/table; full held target vs table',
+            'restored_world_pairs': 'all complete fingers/arm/palm vs entire target/table/registered obstacles; full held target vs table/registered obstacles',
             'self_collision': 'cuRobo native spheres, vendor self_collision_ignore retained; all native robot spheres re-enabled for full-path validity',
             'physics_self_collision': False,
             'physics_self_collision_limitation': 'PhysX native Panda self collision remains disabled as inherited; cuRobo self collision constrains all commanded paths, not dynamic deviations'})
@@ -212,7 +212,8 @@ class Planner:
         independent_fingers=np.asarray(self.scene['qpos'][7:9]) if attached_to_tcp is not None else None
         exact_path=path if independent_fingers is None else np.c_[path,np.repeat(independent_fingers[None],len(path),axis=0)]
         exact = check_robot_path(exact_path, opening, pose_matrix(self.scene['object_pose']), self.scene['object_id'],
-                                 base_pose=self.base, allow_pad_contact=allow_pad, **kwargs)
+                                 base_pose=self.base, allow_pad_contact=allow_pad,
+                                 obstacles=self.scene.get('obstacles', []), **kwargs)
         check_deadline(deadline, label + ":after_geometry")
         own = self.self_valid(path, opening, independent_fingers)
         check_deadline(deadline, label + ":after_self_collision")

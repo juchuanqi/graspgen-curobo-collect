@@ -13,6 +13,7 @@ import arm_speed
 from overlap import run_overlap
 import grasp_symmetry
 import static_state
+from obstacle_scene import planner_obstacles
 
 SPEED_PROFILE = arm_speed.from_environment()
 
@@ -67,7 +68,8 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
             self.lift_enabled = False
 
         def scene(self):
-            return {'object_id': entry['object_id'], 'urdf_path': str(URDF), 'joint_names': NAMES, 'qpos': self.row['qpos'].tolist(), 'tcp_pose': self.row['tcp_pose'].tolist(), 'base_pose': env.robot.data.root_link_pose_w[0].cpu().numpy().tolist(), 'table_pose': [0.495, 0.0, -0.025, 1.0, 0.0, 0.0, 0.0], 'table_shape_local_pose': [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], 'table_shape_half_size': [0.6, 0.6, 0.025], 'object_pose': self.row['object_pose'].tolist(), 'object_parts': asset['parts'], 'object_size_m': asset['size_m'], 'obstacles': []}
+            mode = "wall" if getattr(env, "scenario", "clear") == "wall" else "none"
+            return {'object_id': entry['object_id'], 'urdf_path': str(URDF), 'joint_names': NAMES, 'qpos': self.row['qpos'].tolist(), 'tcp_pose': self.row['tcp_pose'].tolist(), 'base_pose': env.robot.data.root_link_pose_w[0].cpu().numpy().tolist(), 'table_pose': [0.495, 0.0, -0.025, 1.0, 0.0, 0.0, 0.0], 'table_shape_local_pose': [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], 'table_shape_half_size': [0.6, 0.6, 0.025], 'object_pose': self.row['object_pose'].tolist(), 'object_parts': asset['parts'], 'object_size_m': asset['size_m'], 'obstacles': planner_obstacles(mode), 'obstacle_mode': mode}
 
         def status(self, state):
             write(args.output / 'STATUS.json', {'state': state, 'case_id': entry['case_id'], 'method': args.method, 'actions': len(self.actions), 'wall_s': time.monotonic() - self.started, 'reason': self.reason})
@@ -184,7 +186,7 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
             if self.static_audit['status'] != 'passed':
                 self.reason = 'initial_object_not_static'
             self.timing['reset_settle'] = time.monotonic() - t
-            initial = check_robot_path(self.row['qpos'], self.row['qpos'][7:].sum(), matrix(self.row['object_pose']), entry['object_id'], base_pose=matrix(env.robot.data.root_link_pose_w[0].cpu().numpy()))
+            initial = check_robot_path(self.row['qpos'], self.row['qpos'][7:].sum(), matrix(self.row['object_pose']), entry['object_id'], base_pose=matrix(env.robot.data.root_link_pose_w[0].cpu().numpy()), obstacles=self.scene()['obstacles'])
             write(args.output / 'INITIAL_GEOMETRY.json', initial)
             if not initial['valid'] and self.reason is None:
                 self.reason = 'invalid_initial_geometry'
@@ -264,8 +266,9 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
             closure = np.stack([r['qpos'] for r in self.rows[close_begin:]])
             objects = np.stack([matrix(r['object_pose']) for r in self.rows[close_begin:]])
             base_pose = matrix(env.robot.data.root_link_pose_w[0].cpu().numpy())
+            obstacles = self.scene()['obstacles']
             def check_closure():
-                return check_robot_path(closure, closure[:, 7:].sum(axis=1), objects, entry['object_id'], base_pose=base_pose, allow_pad_contact=True, pad_penetration_m=0.001)
+                return check_robot_path(closure, closure[:, 7:].sum(axis=1), objects, entry['object_id'], base_pose=base_pose, allow_pad_contact=True, pad_penetration_m=0.001, obstacles=obstacles)
             budget = self.selected['remaining_budget_s']
             if getattr(args, 'overlap_lift', False):
                 # All simulator reads occur before the RPC thread starts.

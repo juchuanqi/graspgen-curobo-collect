@@ -19,6 +19,7 @@ from scipy.spatial.transform import Rotation
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from occlusion_geometry import design_occluder
+from obstacle_scene import WALL
 from isaaclab.utils.math import quat_apply_inverse
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -196,15 +197,16 @@ class PickupEnv(DirectRLEnv):
         self.object = RigidObject(RigidObjectCfg(
             prim_path="/World/envs/env_.*/Object", spawn=object_spawn,
             init_state=RigidObjectCfg.InitialStateCfg(pos=(.615,0.,-float(self.bounds_min[2])+.002))))
+        wall_xyz = WALL["pose"][:3] if self.scenario == "wall" else (2.0, 0.0, WALL["pose"][2])
         self.wall = RigidObject(RigidObjectCfg(
             prim_path="/World/envs/env_.*/Wall",
             spawn=sim_utils.CuboidCfg(
-                size=(0.02, 0.25, 0.18),
+                size=tuple(WALL["dims"]),
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True, disable_gravity=True),
                 collision_props=sim_utils.CollisionPropertiesCfg(),
                 physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=0.8, dynamic_friction=0.7),
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.65,0.65,0.65))),
-            init_state=RigidObjectCfg.InitialStateCfg(pos=((0.47,0.,0.09) if self.scenario=="wall" else (2.,0.,0.09)))))
+            init_state=RigidObjectCfg.InitialStateCfg(pos=tuple(wall_xyz))))
         self.scene.rigid_objects["wall"] = self.wall
         self.scene.clone_environments(copy_from_source=False)
         if self.occlusion != "none":

@@ -107,6 +107,7 @@ class Pipeline:
             '--episodes-per-object', str(self.args['episodes_per_object']), '--seed', str(self.args['seed']),
             '--arm-speed-profile', self.args.get('arm_speed_profile', 'baseline'),
             '--execution-profile', self.args.get('execution_profile', 'baseline'),
+            '--obstacle', self.args.get('obstacle', 'none'),
             '--grasp-symmetry', 'off',
             '--candidate-root', self.args['candidate_root'],
             '--initialization-retries', str(self.args['initialization_retries'])]
@@ -259,6 +260,8 @@ def main():
     parser.add_argument('--arm-speed-profile', choices=('baseline', 'recommended'),
                         help='New runs default to recommended (approach 1.0 / carry 0.3 rad/s); resume keeps the registered profile')
     parser.add_argument('--objects')
+    parser.add_argument('--obstacle', choices=('none', 'wall'),
+                        help='Fixed kinematic wall in simulation and planning; new runs default to none')
     parser.add_argument('--episodes-per-object', type=int)
     parser.add_argument('--seed', type=int)
     parser.add_argument('--plan-json', type=Path)
@@ -293,6 +296,7 @@ def main():
                 continue
             value = str(value.resolve()) if isinstance(value, Path) else value
             registered = values.get(key, 1 if key == 'export_workers' else
+                                    'none' if key == 'obstacle' else
                                     'baseline' if key in {'arm_speed_profile', 'execution_profile'} else None)
             if registered != value:
                 parser.error(f'--{key.replace("_", "-")} differs from the registered run')
@@ -302,7 +306,7 @@ def main():
         receipt['arguments'] = values
     else:
         values = dict(gpus='0', workers=1, export_workers=1, arm_speed_profile='recommended', execution_profile='accelerated',
-            objects='all', episodes_per_object=5, seed=2026111300,
+            objects='all', obstacle='none', episodes_per_object=5, seed=2026111300,
             candidate_root=str(ROOT / 'generated/candidates'), runtime=str(ROOT / 'runtime'),
             lerobot_python=None, train_steps=100, initialization_retries=2, data_only=False,
             plan_json=None, stop_after_per_object=None)

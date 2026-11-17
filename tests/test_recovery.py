@@ -27,6 +27,7 @@ import argparse, os, sys, time, subprocess
 from pathlib import Path
 from recovery import durable_write as write
 from common import read
+from runtime.collector.obstacle_scene import planner_obstacles
 p=argparse.ArgumentParser();p.add_argument('--job');p.add_argument('--output');p.add_argument('--address');a,_=p.parse_known_args()
 job=read(a.job);out=Path(a.output);out.mkdir(parents=True)
 write(out/'ROUTING.json',dict(simulation_gpu=os.environ.get('CUDA_VISIBLE_DEVICES'),
@@ -51,6 +52,8 @@ for i,c in enumerate(job['cases']):
     event('physical:'+c['case_id'])
     if mode=='execution_exit': os._exit(23)
     write(d/'ENTRY.json',c)
+    obstacle='none' if mode=='obstacle_downgrade' else job.get('obstacle','none')
+    write(d/'SCENE.json',dict(obstacle_mode=obstacle,obstacles=planner_obstacles(obstacle)))
     failed=mode=='physical_failure'
     write(d/'METADATA.json',dict(case_id=c['case_id'],object_id=c['object_id'],scene_seed=c['scene_seed'],
         reason='stable_hold_not_reached' if failed else 'stable_grasp_hold',success=not failed,
@@ -121,6 +124,39 @@ class Fixture:
 
 
 class CollectionRecoveryTests(unittest.TestCase):
+    def test_wall_reaches_worker_subprocess_and_resume_keeps_mode(self):
+        for accelerated in (False, True):
+            with self.subTest(accelerated=accelerated), tempfile.TemporaryDirectory() as tmp:
+                f = Fixture(Path(tmp), episodes=2, accelerated=accelerated)
+                f.plan['obstacle'] = 'wall'
+                self.assertEqual(f.run()['status'], 'completed')
+                ledger = read(f.args.output / 'SLOTS.json')
+                self.assertEqual(ledger['counts'], {'success': 2})
+                for slot in ledger['slots'].values():
+                    self.assertEqual(read(Path(slot['output']) / 'SCENE.json')['obstacle_mode'], 'wall')
+                before = f.lines()
+                f.run(resume=True)
+                self.assertEqual(before, f.lines())
+                f.plan['obstacle'] = 'none'
+                with self.assertRaisesRegex(ValueError, 'original fixed plan'):
+                    f.run(resume=True)
+                self.assertEqual(before, f.lines())
+
+    def test_silent_wall_downgrade_is_invalid_and_never_retried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Fixture(Path(tmp))
+            f.plan['obstacle'] = 'wall'
+            f.control.write_text('obstacle_downgrade')
+            with self.assertRaises(RuntimeError):
+                f.run()
+            slot = read(f.args.output / 'SLOTS.json')['slots']['block55_000000']
+            self.assertEqual(slot['state'], 'invalid_data')
+            self.assertEqual(slot['reason'], 'saved_obstacle_scene_mismatch')
+            before = f.lines()
+            with self.assertRaises(RuntimeError):
+                f.run(resume=True)
+            self.assertEqual(before, f.lines())
+
     def test_eight_dedicated_planners_async_validation_and_warmup_barrier(self):
         with tempfile.TemporaryDirectory() as tmp:
             f=Fixture(Path(tmp),episodes=16,workers=8,accelerated=True)
@@ -326,9 +362,10 @@ runpy.run_path('sim_worker.py',run_name='__main__')
 
 
 class PipelineRecoveryTests(unittest.TestCase):
-    def test_speed_selection_reaches_frozen_collector_and_survives_resume(self):
-        for requested, expected in [(None, 'recommended'), ('baseline', 'baseline')]:
-            with self.subTest(profile=requested), tempfile.TemporaryDirectory() as tmp:
+    def test_speed_and_obstacle_reach_frozen_collector_and_survive_resume(self):
+        for requested, expected, obstacle in [(None, 'recommended', None), ('baseline', 'baseline', None),
+                                               (None, 'recommended', 'wall')]:
+            with self.subTest(profile=requested, obstacle=obstacle), tempfile.TemporaryDirectory() as tmp:
                 base = Path(tmp)
                 checkout = base / 'checkout'
                 (checkout / 'runtime').mkdir(parents=True)
@@ -350,10 +387,12 @@ from arm_speed import parse
 p = argparse.ArgumentParser()
 p.add_argument('--output', type=Path)
 p.add_argument('--arm-speed-profile', required=True)
+p.add_argument('--obstacle', required=True)
 p.add_argument('--resume', action='store_true')
 a, _ = p.parse_known_args()
 a.output.mkdir(parents=True, exist_ok=a.resume)
 write(a.output / 'PROFILE.json', parse(a.arm_speed_profile).describe())
+write(a.output / 'OBSTACLE.json', dict(mode=a.obstacle))
 write(a.output / 'RUN.json', dict(status='checkpoint'))
 write(a.output / 'SLOTS.json', dict(slots={{'block55_000000': dict(
     state='success', entry=dict(fixed_index=0))}}))
@@ -366,12 +405,16 @@ with (a.output / 'launches').open('a') as stream:
                         '--candidate-root', str(candidates), '--lerobot-python', sys.executable]
                 if requested:
                     argv += ['--arm-speed-profile', requested]
+                if obstacle:
+                    argv += ['--obstacle', obstacle]
                 # An ambient setting must not override the registered CLI/default.
                 with patch('recoverable_pipeline.ROOT', checkout), patch('sys.argv', argv), \
                         patch.dict(os.environ, {'ARM_SPEED_PROFILE': 'baseline' if expected == 'recommended' else 'recommended'}):
                     pipeline_main()
                 self.assertEqual(read(output / 'PIPELINE.json')['arguments']['arm_speed_profile'], expected)
                 self.assertEqual(read(output / 'raw/PROFILE.json')['name'], expected)
+                self.assertEqual(read(output / 'PIPELINE.json')['arguments']['obstacle'], obstacle or 'none')
+                self.assertEqual(read(output / 'raw/OBSTACLE.json')['mode'], obstacle or 'none')
 
                 resume = ['pipeline.py', '--output', str(output), '--resume',
                           '--stop-after-per-object', '1']
@@ -380,10 +423,17 @@ with (a.output / 'launches').open('a') as stream:
                     pipeline_main()
                 self.assertEqual((output / 'raw/launches').read_text().splitlines(), [expected, expected])
                 self.assertEqual(read(output / 'raw/PROFILE.json')['name'], expected)
+                self.assertEqual(read(output / 'raw/OBSTACLE.json')['mode'], obstacle or 'none')
 
                 opposite = 'baseline' if expected == 'recommended' else 'recommended'
                 with patch('recoverable_pipeline.ROOT', output / 'source'), \
                         patch('sys.argv', resume + ['--arm-speed-profile', opposite]), \
+                        self.assertRaises(SystemExit) as rejected:
+                    pipeline_main()
+                self.assertEqual(rejected.exception.code, 2)
+                self.assertEqual((output / 'raw/launches').read_text().splitlines(), [expected, expected])
+                with patch('recoverable_pipeline.ROOT', output / 'source'), \
+                        patch('sys.argv', resume + ['--obstacle', 'none' if obstacle == 'wall' else 'wall']), \
                         self.assertRaises(SystemExit) as rejected:
                     pipeline_main()
                 self.assertEqual(rejected.exception.code, 2)

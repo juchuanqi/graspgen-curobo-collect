@@ -180,7 +180,8 @@ def run_stage(stage, args, tokens, sim_python, planner_python, processes):
                 job = dict(stage=stage["name"], worker_id=worker_id,
                            persistent=stage["persistent"], cases=workload,
                            candidate_root=str(args.candidate_root),
-                           grasp_symmetry=getattr(args,"grasp_symmetry","off"))
+                           grasp_symmetry=getattr(args,"grasp_symmetry","off"),
+                           obstacle=getattr(args, "obstacle", "none"))
                 path = out / "jobs" / (worker_id + ".json")
                 write(path, job)
                 worker_output = out / "workers" / worker_id
@@ -260,6 +261,8 @@ def main():
                         help="Joint timing: baseline (default), or approach 1.0 / carry 0.3 rad/s")
     parser.add_argument("--grasp-symmetry", choices=grasp_symmetry.MODES, default="off",
                         help="near-first: pair each TCP pose with its local-Z 180-degree flip; prefer the closer orientation")
+    parser.add_argument("--obstacle", choices=("none", "wall"), default="none",
+                        help="none: empty table (default); wall: existing kinematic wall as a planner obstacle")
     parser.add_argument("--gui", action="store_true", help="Show Isaac Sim window (one worker)")
     parser.add_argument("--candidate-root", type=Path, default=HERE / "generated/candidates")
     parser.add_argument("--benchmark", action="store_true", help="Run original cold/warm/parallel timing comparison")
@@ -330,6 +333,7 @@ def main():
     plan['execution_profile'] = args.execution_profile or (
         'baseline' if args.benchmark or args.smoke else 'accelerated')
     plan["grasp_symmetry"] = args.grasp_symmetry
+    plan["obstacle"] = args.obstacle
     plan["symmetry_candidate_budget"] = dict(
         derived_orientations_per_source=2 if args.grasp_symmetry=="near-first" else 1,
         scene_qualified_per_group=50,

@@ -1,0 +1,104 @@
+# 固定墙障碍物采集
+
+`collect` 和 `pipeline` 均支持 `--obstacle none|wall`，默认 `none`。
+`wall` 在 Isaac 中生成带碰撞的运动学长方体，并把同一份尺寸和位姿发送给
+cuRobo 及完整几何复核。它是固定墙功能，目前没有随机障碍或多障碍布局。
+独立复核覆盖候选夹爪扫掠、初态、闭合、完整机械臂路径和持物轨迹；
+允许夹指与目标的接触不会放宽夹指或目标与墙的碰撞限制。
+
+```bash
+# 只核对计划，不启动 GPU。
+bash run.sh collect --objects all --obstacle wall --dry-run
+
+# 新批次：四物体各 2 个固定槽位，采集后按物体并行导出及完整读回。
+bash run.sh pipeline --output outputs/wall_4obj_01 \
+  --objects all --episodes-per-object 2 --gpus 0 --obstacle wall \
+  --data-only --export-workers 4 \
+  --candidate-root /你的/candidates --lerobot-python /你的/lerobot-venv/bin/python
+
+# 恢复沿用该批冻结源码与已登记的 wall；成功和失败槽位均不重抓。
+bash run.sh pipeline --output outputs/wall_4obj_01 --resume --data-only
+
+# 已有带墙 raw 也可独立进行 CPU 后处理。
+bash run.sh export --run /已有/带墙run --output outputs/wall_export_01 \
+  --workers 4 --python /你的/lerobot-venv/bin/python
+```
+
+新 `pipeline` 沿用加速执行及 recommended 关节速度默认值，仿真并发由
+`--workers` / `--gpus` 控制，后处理并发由 `--export-workers` 控制。
+失败槽位保留且计入固定分母，只有通过完整筛选的成功条目进入训练包。
+某物体没有合格成功条目时不会为它生成空包，原始槽位及筛选报告仍保留。
+
+## 参数与证据
+
+唯一墙定义在 `runtime/collector/obstacle_scene.py`：
+尺寸 `[0.02, 0.30, 0.22]` m，世界坐标位姿
+`[0.545, 0, 0.11, 1, 0, 0, 0]`（xyz + wxyz）。
+仿真生成与规划场景共用此定义，`none` 下墙停在远处且不加入规划障碍。
+
+`PIPELINE.json`、`PLAN.json`、worker job 登记模式；每条 `SCENE.json`
+记录 `obstacle_mode` 和完整 `obstacles`。规划目录的 `WORLD.json` 保存
+变换到机械臂基坐标系后的墙。已有原始子步接触记录保留墙的接触证据。
+
+采集接收保存结果时核对计划与 `SCENE.json`，模式、尺寸或位姿不一致即
+标记 `invalid_data` 并停止，不自动重抓。独立后处理也执行同样核对，
+排除不一致条目，报告为 `obstacle_scene_mismatch`；选择清单记录模式和源哈希。
+历史无墙场景可省略空障碍字段；带墙必须有明确的模式和完整几何。
+即使使用历史格式调试选项也不能绕过这个核对。
+
+恢复时不能把 `wall` 改为 `none`，或改变已登记墙几何。已有批次继续执行
+自己的冻结源码；需要本次新增入口和核对的批次应另建输出目录。
+
+## 已有物理验证的边界
+
+2026-11-17 修复 worker job 漏传障碍参数后的四物体各 8 槽实测
+（原关节速度、accelerated 执行）：
+
+| 物体 | 成功 | 其他槽位 |
+|---|---:|---|
+| block55 | 5/8 | 3 规划失败 |
+| slender95 | 0/8 | 8 指定初态失配，未进入规划 |
+| cylinder36h52 | 7/8 | 1 禁止接触物理失败 |
+| disk56h24 | 0/8 | 8 规划预算内未找到完整候选 |
+| 合计 | 12/32 | 11 规划失败、8 初态不合格、1 物理失败 |
+
+该批采集墙钟 522.44 秒。37.5% 是全部固定槽位的成功产出比例，包含初态
+不合格槽位；不能据此把细长物体失败归因于规划，也不能用与无墙批次相近的
+墙钟认定墙没有开销。原始数据位于共享工作区
+`results/graspgen_obstacle_wall_fixed_4obj_20261117_01/run`，不包含在源码仓库。
+
+此前 2026-11-16 标记为 wall 的两批因漏传参数实际没有墙，不能作为带墙
+成功率或性能证据。本次核对会拒绝将这类记录作为带墙数据导出。
+这组 12/32 是补齐独立墙几何复核前的历史物理批次，不能作为新实现成功率。
+本次入口、恢复核对、独立几何复核和后处理接入另做回归及小样本检查，
+不提供带墙吞吐保证。下一阶段需分别解决
+细长物体初态稳定性和圆盘在墙旁的可行抓取覆盖，再评估更大批次。
+
+## 2026-11-17 接入验证
+
+在本次新增入口和独立墙几何复核下，另建单圆柱固定槽位批次，使用
+`recommended` 关节速度、`accelerated` 执行、`--obstacle wall`、
+`--data-only --export-workers 4`。该条 `stable_grasp_hold` 成功，590 个动作；
+初态、接近、下降、闭合、离桌与抬升复核均记录 `obstacle_count: 1`，
+select/lift 的 cuRobo `WORLD.json` 均含墙。
+
+完整管线通过了 590 行官方加载器读回、1,180 次 RGB 比较、末观测与 padding
+检查及 320 项独立统计。恢复后原始文件哈希不变、只有一次物理尝试，显式改成
+`--obstacle none` 在派发前被拒绝。这是单条接入验证，不能推算四物体成功率。
+
+既有真实带墙批次另做 CPU 后处理，32 固定槽位中筛出 12 条，生成方块 5 条和
+圆柱 7 条的两个标准包；18,395 行官方完整读回、36,790 次 RGB 比较、2,240 项
+独立统计及联合数据集的 CPU ACT 2 步有限更新通过。2,601 个原始文件前后哈希
+一致。该后处理检查不为历史轨迹补做新版本的几何证明；其物理实现边界见上文。
+旧漏传参数批次的 32 个槽位全部被排除为 `obstacle_scene_mismatch`，导出返回失败。
+
+回归共发现 91 项：90 项通过，独立 LeRobot 统计模块按环境跳过；在指定
+LeRobot 0.4.4 环境另跑该模块 5 项，全部通过。新增测试包含真实子进程派发、
+冻结管线参数与恢复、错误墙证据拒收、夹指碰墙、路径中间穿墙和持物碰墙。
+
+共享工作区证据目录：
+`results/graspgen_obstacle_pipeline_integration_20261117_01/`。
+其中 `LIVE_RESULT.json`、`DELIVERY_RESULT.json`、`core_final.log` 和
+`statistics.log` 分别记录新仿真管线、历史后处理、完整回归和统计回归；
+`live_pipeline/source/` 与 `source/` 各自保存测试源码快照。历史后处理先于
+独立几何补齐启动，新的单圆柱管线包含补齐后的几何实现。
