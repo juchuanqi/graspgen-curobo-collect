@@ -93,7 +93,8 @@ def screen_scene_candidates(candidates,scene,maximum=50):
             chosen=None;width_reports=[]
             for opening in OPENINGS_M:
                 if opening<minimum:continue
-                check=check_gripper_path(np.stack((pre,grasp)),opening,obj,scene['object_id'],allow_pad_contact=False)
+                check=check_gripper_path(np.stack((pre,grasp)),opening,obj,scene['object_id'],
+                                         allow_pad_contact=False, obstacles=scene.get('obstacles', []))
                 width_reports.append({'opening_m':opening,**check})
                 if check['valid']:chosen=opening;break
             candidate={**candidate,'scene_width_checks':width_reports}

@@ -48,3 +48,5 @@
 本版本交付范围与当前四物品采集器一致。新物体、额外障碍或不同机器人需要相应开发和实际验证。
 
 `runtime/collector/linear_motion_score.py` 统一采集与重放使用的 COM 平移/转角评分；`static_state.py` 校验原有落稳过程中的末尾 0.5 秒证据。`tools/lerobot_export/` 负责默认严格筛选、原生 v3 导出、完整读取及 ACT 训练检查；`tools/pipeline.py` 串起本地验收各阶段并保存阶段日志。
+
+固定墙几何由 `runtime/collector/obstacle_scene.py` 统一提供给仿真生成、规划场景及数据接收核对。`tools/recoverable_pipeline.py` 冻结并传递障碍选择，`resumable_collect.py` 接收 raw 和 `select_sources.py` 筛选时分别核对。新增布局需同时扩展这些证据约定，详见 [固定墙说明](OBSTACLES.md)。

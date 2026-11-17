@@ -12,6 +12,7 @@ import time
 import traceback
 
 from common import read, device_layout
+from runtime.collector.obstacle_scene import verify_obstacle_scene
 from recovery import (RunLock, candidate_manifest, digest, durable_write, tree_manifest,
                       verify_candidates, verify_manifest, initialization_resource_error)
 
@@ -94,6 +95,11 @@ class Collector:
             return False
         if metadata.get('error') or metadata.get('reason') == 'technical_exception':
             self.set_slot(slot, 'interrupted_unknown', reason='technical_episode_failure')
+            return False
+        try:
+            verify_obstacle_scene(self.plan.get('obstacle', 'none'), read(directory / 'SCENE.json'))
+        except (ValueError, OSError) as error:
+            self.set_slot(slot, 'invalid_data', reason='saved_obstacle_scene_mismatch', error=str(error))
             return False
         if 'raw_sha256' not in slot:
             self.set_slot(slot, 'validating', output=str(directory), raw_sha256=tree_manifest(directory))
@@ -264,7 +270,8 @@ class Collector:
         worker_id = f"{cases[0]['object_id']}_attempt{index:04d}_lane{lane}"
         job = dict(stage=self.stage['name'], worker_id=worker_id, persistent=True, cases=cases,
                    candidate_root=str(self.args.candidate_root), grasp_symmetry=self.plan['grasp_symmetry'],
-                   execution_profile=self.plan.get('execution_profile', 'baseline'))
+                   execution_profile=self.plan.get('execution_profile', 'baseline'),
+                   obstacle=self.plan.get('obstacle', 'none'))
         if self.accelerated:
             job.update(validation_handoffs=str(self.out / 'validation_handoffs'),
                        validation_abort=str(self.abort_path),
