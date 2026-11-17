@@ -26,16 +26,18 @@
 
 ## 圆柱几何先验
 
-原始圆盘模型候选在墙场景中可能没有可行姿态。可以另建一份明确标识来源的几何候选池：
+原始圆柱模型候选存在曲面偏边接触，圆盘模型候选在墙场景中可能没有可行姿态。可在规划 Python 环境中另建一份明确标识来源的几何候选池：
 
 ```bash
 python -B tools/generate_axial_candidates.py \
   --object disk56h24 --output-root generated/axial_prior
+python -B tools/generate_axial_candidates.py \
+  --object cylinder36h52 --output-root generated/axial_prior
 ```
 
-该工具只接受一个居中、轴向为 Z 的圆柱基元。它根据物体高度生成 20 个轴向角、5 个倾角及2个接触高度，共200个姿态，并执行原有物体几何筛选。采集圆盘时显式选择 `--objects disk56h24 --candidate-root generated/axial_prior`，同时开启终点预筛。
+该工具只接受一个居中、轴向为 Z 的圆柱基元。它根据物体高度生成 20 个轴向角、5 个倾角及2个接触高度，每物体共200个姿态，并执行原有物体几何筛选。采集圆盘时显式选择 `--objects disk56h24 --candidate-root generated/axial_prior`，圆柱选择 `--objects cylinder36h52`，同时开启终点预筛。四物体混合采集的候选根目录还须包含方块和细长条的原始模型池；保留各物体的缓存及报告，不覆盖已登记实验。
 
-这是替换候选池的几何先验，**没有调用 GraspGen，也没有新的模型置信度**。缓存不允许覆盖；不会将200个几何姿态追加到原有200个模型姿态。历史管线的目录键仍为 `graspgen`，以 `REPORT.json` 和回合元数据的 `candidate_source_kind` 为真实来源，模型候选数记录为0。混合批次必须逐物体报告来源，不能将圆盘的结果作为纯 GraspGen 提升。
+这是替换候选池的几何先验，**没有调用 GraspGen，也没有新的模型置信度**。缓存不允许覆盖；不会将200个几何姿态追加到原有200个模型姿态。历史管线的目录键仍为 `graspgen`，以 `REPORT.json` 和回合元数据的 `candidate_source_kind` 为真实来源，模型候选数记录为0。混合批次必须逐物体报告来源，不能将圆柱或圆盘的结果作为纯 GraspGen 提升。
 
 初态预检、原生夹指对外碰撞、完整几何扫掠、禁止接触限制、1 mm 接触穿透上限、120控制周期的独立稳定保持和导出读回验收均继续生效。新增配置不涉及搬运、松手或篮子任务。
 
@@ -46,3 +48,5 @@ python -B tools/generate_axial_candidates.py \
 正式复验必须重新规划闭合后的抬升，使用冻结初态清单，不替换失败、不重试物理抓取，完成全部原始记录和严格导出读回检查。多项设置同时变化时只能报告组合干预效果；各组件的因果作用需要单独消融实验。
 
 可对任意保存回合执行 `python -B tools/audit_grip_feedback.py /完整回合目录`，不修改原始文件。它核验保存控制器的源码哈希，用上一帧接触力逐步重建反馈目标，并严格比较记录动作、重建动作和实际目标，避免漏记反馈或错位一帧。未启用反馈的回合会明确标记 `feedback_activated: false`。
+
+完整固定初态复验及候选来源见 [256 初态验证报告](QUALITY_VALIDATION_20261117.md)。
