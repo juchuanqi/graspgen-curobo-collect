@@ -1,8 +1,8 @@
 """cuRobo + complete independent geometry checks for mesh collection.
 
-Finger sphere/world terms are disabled during optimization, then all omitted
-world pairs are restored by exact URDF-box/complete compound-target sweeps.
-Self checks re-enable all native robot spheres and retain vendor ignore pairs.
+Arm, palm and finger spheres remain enabled against the world during IK and
+trajectory optimization. Exact URDF-box/complete compound-target sweeps remain
+mandatory before execution. Self checks retain the vendor ignore pairs.
 Full held geometry is coupled to FK throughout the initial support departure;
 cuRobo uses its full conservative attachment after this generic departure.
 """
@@ -131,21 +131,24 @@ class Planner:
             'world_target_parts': 0 if remove_object else len(scene['object_parts']),
             'complete_target_parts': len(scene['object_parts']),
             'primitive_world_cylinders': 'conservative axis-aligned local enclosing cuboids; exact independent checker retains cylinder64 circumscription',
-            'optimizer_disabled_world_links': FINGERS,
-            'restored_world_pairs': 'all complete fingers/arm/palm vs entire target/table/registered obstacles; full held target vs table/registered obstacles',
+            'optimizer_disabled_world_links': [],
+            'optimizer_enabled_finger_world_links': FINGERS,
+            'finger_world_representation': 'cuRobo native spheres with the configured 2mm collision buffer; exact deployed URDF finger boxes checked independently',
+            'target_contact_policy': 'select keeps the target in the world without contact exemptions; lift removes only the grasped target from the world and checks its full attachment, retaining table and registered obstacles',
+            'independent_world_pairs': 'all complete fingers/arm/palm vs entire target/table/registered obstacles; full held target vs table/registered obstacles',
             'self_collision': 'cuRobo native spheres, vendor self_collision_ignore retained; all native robot spheres re-enabled for full-path validity',
             'physics_self_collision': False,
             'physics_self_collision_limitation': 'PhysX native Panda self collision remains disabled as inherited; cuRobo self collision constrains all commanded paths, not dynamic deviations'})
 
     def set_width(self, opening):
         if hasattr(self, 'width') and abs(self.width-float(opening)) < 1e-8:
-            self.motion_gen.toggle_link_collision(FINGERS, False)
+            self.motion_gen.toggle_link_collision(FINGERS, True)
             self.motion_gen.rollout_fn.robot_self_collision_constraint.enable_cost()
             return
         self.width = float(opening)
         self.motion_gen.toggle_link_collision(FINGERS, True)
         self.motion_gen.update_locked_joints({'panda_finger_joint1': self.width/2}, copy.deepcopy(self.config))
-        self.motion_gen.toggle_link_collision(FINGERS, False)
+        self.motion_gen.toggle_link_collision(FINGERS, True)
         self.motion_gen.rollout_fn.robot_self_collision_constraint.enable_cost()
 
     def check_fk(self, q, expected_pose):
@@ -201,7 +204,7 @@ class Planner:
                       'finger_representation':'vendor spheres at symmetric mean, radii inflated by actual independent finger displacement bound',
                       'configuration': self.config['kinematics']['self_collision_ignore']}
         finally:
-            self.motion_gen.toggle_link_collision(FINGERS, False)
+            self.motion_gen.toggle_link_collision(FINGERS, True)
         return report
 
     def validate(self, path, opening, label, allow_pad=False, attached_to_tcp=None, deadline=None):
@@ -292,8 +295,8 @@ class Planner:
         report.update(ik_queries=0,full_candidates=[])
         if not scene_valid:
             save(self.output/'CANDIDATE_REPORT.json',report);return {'success':False,'reason':'no_scene_geometry_candidate','candidate_report':report}
-        # A single fixed-width batch IK screen, with finger spheres omitted and
-        # complete exact geometry checked at the selected width afterward.
+        # A single fixed-width batch IK screen with world collisions enabled
+        # for the fingers too. Exact geometry is checked at the selected width.
         self.set_width(.08)
         t=time.monotonic()
         ik_ok,ik_solutions=self.batch_ik([np.asarray(c['pregrasp_world']) for c in scene_valid], self.scene['qpos'][:7])
