@@ -4,7 +4,7 @@ import time
 import numpy as np
 import torch
 from common import write
-from collection_env import URDF, NAMES, LINKS
+from collection_env import URDF, NAMES, LINKS, TRANSFER
 from collection_score import CollectionScore, PROTOCOL, matrix, sanitize
 from io_audit import LiveIOAudit
 from geometry.api import check_robot_path
@@ -13,6 +13,7 @@ import arm_speed
 from overlap import run_overlap
 import grasp_symmetry
 import static_state
+from grip_control import GripController, GripPolicy
 from obstacle_scene import planner_obstacles
 
 SPEED_PROFILE = arm_speed.from_environment()
@@ -66,10 +67,15 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
             self.ever_bilateral = False
             self.started = time.monotonic()
             self.lift_enabled = False
+            self.grip_mode = TRANSFER.get('grip_policy', 'zero')
+            if self.grip_mode not in ('zero', 'pad-feedback-3n', 'pad-feedback-5n'):
+                raise ValueError('Unknown grip policy')
+            self.grip_controller = None
+            self.candidate_provenance = None
 
         def scene(self):
             mode = "wall" if getattr(env, "scenario", "clear") == "wall" else "none"
-            return {'object_id': entry['object_id'], 'urdf_path': str(URDF), 'joint_names': NAMES, 'qpos': self.row['qpos'].tolist(), 'tcp_pose': self.row['tcp_pose'].tolist(), 'base_pose': env.robot.data.root_link_pose_w[0].cpu().numpy().tolist(), 'table_pose': [0.495, 0.0, -0.025, 1.0, 0.0, 0.0, 0.0], 'table_shape_local_pose': [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], 'table_shape_half_size': [0.6, 0.6, 0.025], 'object_pose': self.row['object_pose'].tolist(), 'object_parts': asset['parts'], 'object_size_m': asset['size_m'], 'obstacles': planner_obstacles(mode), 'obstacle_mode': mode}
+            return {'object_id': entry['object_id'], 'urdf_path': str(URDF), 'joint_names': NAMES, 'qpos': self.row['qpos'].tolist(), 'tcp_pose': self.row['tcp_pose'].tolist(), 'base_pose': env.robot.data.root_link_pose_w[0].cpu().numpy().tolist(), 'table_pose': [0.495, 0.0, -0.025, 1.0, 0.0, 0.0, 0.0], 'table_shape_local_pose': [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], 'table_shape_half_size': [0.6, 0.6, 0.025], 'object_pose': self.row['object_pose'].tolist(), 'object_parts': asset['parts'], 'object_size_m': asset['size_m'], 'obstacles': planner_obstacles(mode), 'obstacle_mode': mode, 'endpoint_screening': bool(TRANSFER.get('endpoint_screening', False)), 'contact_quality_ranking': bool(TRANSFER.get('contact_quality_ranking', False)), 'source_candidate_limit': TRANSFER.get('source_candidate_limit',200)}
 
         def status(self, state):
             write(args.output / 'STATUS.json', {'state': state, 'case_id': entry['case_id'], 'method': args.method, 'actions': len(self.actions), 'wall_s': time.monotonic() - self.started, 'reason': self.reason})
@@ -117,6 +123,9 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
             if action.shape != (9,) or not np.isfinite(action).all():
                 self.reason = 'invalid_action'
                 return False
+            if self.grip_controller is not None:
+                action = action.copy()
+                action[7:] = self.grip_controller.command(self.row['pad_object_force_n'])
             if np.max(np.abs(action[:7] - self.row['position_targets'][:7])) > SPEED_PROFILE.step_limit(self.phase):
                 self.reason = 'joint_target_delta_exceeded'
                 return False
@@ -196,7 +205,9 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
 
         def load_candidates(self):
             started = time.monotonic()
-            candidates, provenance = load_candidate_source(args.candidate_root, args.method, entry['object_id'])
+            candidates, provenance = load_candidate_source(args.candidate_root, args.method, entry['object_id'],
+                maximum=TRANSFER.get('source_candidate_limit',200))
+            self.candidate_provenance = provenance
             write(args.output / 'CANDIDATE_SOURCE.json', provenance)
             self.timing['candidate_load'] = time.monotonic() - started
             if not candidates:
@@ -252,6 +263,9 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
                 self.reason = 'grasp_tracking_failed'
                 return
             self.phase = 2
+            if self.grip_mode != 'zero':
+                force_n = 3. if self.grip_mode == 'pad-feedback-3n' else 5.
+                self.grip_controller = GripController(opening, GripPolicy(force_n=force_n))
             arm = self.row['position_targets'][:7].copy()
             close_begin = len(self.rows) - 1
             for each in np.linspace(opening / 2, 0.0, 90):
@@ -331,6 +345,15 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
             metadata['arm_speed_profile'] = SPEED_PROFILE.describe()
             metadata['execution_profile'] = getattr(args, 'execution_profile', 'baseline')
             metadata['grasp_symmetry'] = self.grasp_symmetry
+            if self.candidate_provenance is not None:
+                report = self.candidate_provenance['geometry_report']
+                metadata['candidate_source_kind'] = self.candidate_provenance['source']
+                metadata['candidate_budget'] = {**metadata['candidate_budget'],
+                    'raw_model_candidates_per_object': report.get('model_candidates', report.get('generated', 200)),
+                    'source_candidates_per_object': report.get('source_candidates', report.get('generated', 200)),
+                    'source_generation_calls': report.get('generation_calls')}
+            metadata['grip_policy'] = (self.grip_controller.describe() if self.grip_controller is not None
+                                       else {'version': self.grip_mode, 'activated': False})
             metadata['actor_local_com_m'] = self.com_local_m.tolist() if hasattr(self, 'com_local_m') else None
             metadata['initial_static_audit'] = getattr(self, 'static_audit', None)
             metadata['io_audit_wall_s'] = self.io_audit_wall_s

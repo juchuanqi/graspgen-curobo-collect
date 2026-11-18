@@ -26,12 +26,13 @@ from curobo.wrap.reacher.motion_gen import MotionGen, MotionGenConfig, MotionGen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from geometry.api import check_robot_path
+from geometry.api import check_robot_path, pad_normal_quality
 from geometry.robot import fk
 from geometry.primitives import pose_matrix, part_matrix
 from target_provider import screen_scene_candidates
 import arm_speed
 import grasp_symmetry
+import planning_clearance
 
 SPEED_PROFILE = arm_speed.from_environment()
 
@@ -102,9 +103,9 @@ class Planner:
 
     def build_world(self, scene, remove_object=False):
         table = self.base_inverse @ pose_matrix(scene['table_pose']) @ pose_matrix(scene['table_shape_local_pose'])
-        world = {'cuboid': {'table': {'dims': (2*np.asarray(scene['table_shape_half_size'])).tolist(), 'pose': pose_list(table)}}}
+        world = {'cuboid': {'table': {'dims': (2*np.asarray(scene['table_shape_half_size']) + 2*planning_clearance.TABLE_M).tolist(), 'pose': pose_list(table)}}}
         for obstacle in scene.get('obstacles', []):
-            world['cuboid'][obstacle['name']] = {'dims': obstacle['dims'], 'pose': pose_list(self.base_inverse@pose_matrix(obstacle['pose']))}
+            world['cuboid'][obstacle['name']] = {'dims': (np.asarray(obstacle['dims']) + 2*planning_clearance.OBSTACLE_M).tolist(), 'pose': pose_list(self.base_inverse@pose_matrix(obstacle['pose']))}
         if not remove_object:
             for i, part in enumerate(scene['object_parts']):
                 dims = part['size'] if part['shape']=='box' else [2*part['radius'], 2*part['radius'], part['length']]
@@ -133,6 +134,7 @@ class Planner:
             'primitive_world_cylinders': 'conservative axis-aligned local enclosing cuboids; exact independent checker retains cylinder64 circumscription',
             'optimizer_disabled_world_links': [],
             'optimizer_enabled_finger_world_links': FINGERS,
+            'execution_planning_clearance_m': planning_clearance.geometry_kwargs(),
             'finger_world_representation': 'cuRobo native spheres with the configured 2mm collision buffer; exact deployed URDF finger boxes checked independently',
             'target_contact_policy': 'select keeps the target in the world without contact exemptions; lift removes only the grasped target from the world and checks its full attachment, retaining table and registered obstacles',
             'independent_world_pairs': 'all complete fingers/arm/palm vs entire target/table/registered obstacles; full held target vs table/registered obstacles',
@@ -216,7 +218,7 @@ class Planner:
         exact_path=path if independent_fingers is None else np.c_[path,np.repeat(independent_fingers[None],len(path),axis=0)]
         exact = check_robot_path(exact_path, opening, pose_matrix(self.scene['object_pose']), self.scene['object_id'],
                                  base_pose=self.base, allow_pad_contact=allow_pad,
-                                 obstacles=self.scene.get('obstacles', []), **kwargs)
+                                 obstacles=self.scene.get('obstacles', []), **planning_clearance.geometry_kwargs(), **kwargs)
         check_deadline(deadline, label + ":after_geometry")
         own = self.self_valid(path, opening, independent_fingers)
         check_deadline(deadline, label + ":after_self_collision")
@@ -295,6 +297,31 @@ class Planner:
         report.update(ik_queries=0,full_candidates=[])
         if not scene_valid:
             save(self.output/'CANDIDATE_REPORT.json',report);return {'success':False,'reason':'no_scene_geometry_candidate','candidate_report':report}
+        if self.scene.get('endpoint_screening', False):
+            # A reachable pregrasp can end at an impossible grasp. Reject those
+            # endpoints before spending the unchanged five full-plan attempts.
+            # This is an additional filter, never a substitute for descent checks.
+            t=time.monotonic(); endpoint_rows=[]; accepted=set()
+            for width in sorted({c['opening_m'] for c in scene_valid}):
+                indices=[i for i,c in enumerate(scene_valid) if c['opening_m']==width]
+                self.set_width(width)
+                ok,solutions=self.batch_ik([np.asarray(scene_valid[i]['grasp_world']) for i in indices],
+                                          self.scene['qpos'][:7])
+                for i,good,q in zip(indices,ok[:,0],solutions[:,0]):
+                    c=scene_valid[i]
+                    checked=self.validate(q[None],width,'endpoint_'+str(i)) if good else None
+                    passed=bool(checked and checked['valid'])
+                    endpoint_rows.append(dict(original_rank=c['original_rank'],
+                        **grasp_symmetry.identity(c),opening_m=width,ik_passed=bool(good),
+                        check=checked,passed=passed))
+                    if passed: accepted.add(i)
+            report['endpoint_screening']=dict(enabled=True,queries=len(scene_valid),
+                passed=len(accepted),wall_s=time.monotonic()-t,candidates=endpoint_rows,
+                budget='extra endpoint IK/geometry preprocessing; max5 full candidates and30s each unchanged')
+            scene_valid=[c for i,c in enumerate(scene_valid) if i in accepted]
+            if not scene_valid:
+                save(self.output/'CANDIDATE_REPORT.json',report)
+                return {'success':False,'reason':'no_reachable_grasp_endpoint','candidate_report':report}
         # A single fixed-width batch IK screen with world collisions enabled
         # for the fingers too. Exact geometry is checked at the selected width.
         self.set_width(.08)
@@ -312,11 +339,18 @@ class Planner:
             delta=np.abs(ik_solutions[index,0]-initial)
             bound=float(delta.max()/.0018) if ik_ok[index,0] else float('inf')
             total=float(delta.sum()) if ik_ok[index,0] else float('inf')
-            costs.append(grasp_symmetry.planning_key(candidate,bound,total,index))
+            key=grasp_symmetry.planning_key(candidate,bound,total,index)
+            if self.scene.get('contact_quality_ranking', False):
+                quality=pad_normal_quality(self.scene['object_id'],candidate['T_object_tcp'])
+                candidate['pad_normal_quality']=quality
+                key=(key[0], int(not quality['preferred']), *key[1:])
+            costs.append(key)
             candidate['pregrasp_joint_motion_estimate']={'max_joint_delta_rad':float(delta.max()),
                 'sum_joint_delta_rad':float(delta.sum()),'control_steps_lower_bound':None if not ik_ok[index,0] else bound}
         order=[cost[-1] for cost in sorted(costs)]
         report['ordering_policy']='near orientation group before far when symmetry enabled; within each group reachable pregrasp IK maximum joint travel / 0.0018, then total joint travel; parent score is not derived confidence'
+        if self.scene.get('contact_quality_ranking', False):
+            report['ordering_policy']='near/far group; preferred pad-normal alignment tier; pregrasp joint travel, then total joint travel. Ranking only; source and full-plan budgets unchanged.'
         report['candidate_planning_order']=[{'derived_rank':scene_valid[i]['original_rank'],
             **grasp_symmetry.identity(scene_valid[i]),
             'motion_estimate':scene_valid[i]['pregrasp_joint_motion_estimate']} for i in order]
