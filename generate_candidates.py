@@ -1,4 +1,4 @@
-"""Generate one 200-pose GraspGen pool per mesh, then apply Panda geometry checks."""
+"""Generate one explicit-size GraspGen pool per mesh, then check Panda geometry."""
 from __future__ import annotations
 
 import argparse
@@ -29,11 +29,11 @@ def surface_sample(mesh, count, seed):
             uv[:, 1:]*(tri[:, 2]-tri[:, 0])).astype(np.float32)
 
 
-def restore_grasps(raw, center):
+def restore_grasps(raw, center, count=200):
     import numpy as np
     poses = np.array(raw, dtype=np.float32, copy=True)
-    if poses.shape != (200, 4, 4):
-        raise ValueError("Expected exactly 200 grasp transforms")
+    if poses.shape != (count, 4, 4):
+        raise ValueError(f"Expected exactly {count} grasp transforms")
     poses[:, :3, 3] += center
     poses[:, 3, :] = [0, 0, 0, 1]
     if not np.isfinite(poses).all():
@@ -48,6 +48,8 @@ def main():
                         default=Path(local_setting("GRASPGEN_CONFIG", str(HERE / "models/checkpoints/graspgen_franka_panda.yml"))))
     parser.add_argument("--output-root", type=Path, default=HERE / "generated/candidates")
     parser.add_argument("--gpu", default="0", help="Logical GPU within CUDA_VISIBLE_DEVICES")
+    parser.add_argument("--num-grasps", type=int, choices=(200, 500, 1000), default=200,
+                        help="Single model call size; use a new output root for each budget")
     args = parser.parse_args()
     names = list(OBJECTS) if args.objects == "all" else args.objects.split(",")
     if not names or len(set(names)) != len(names) or any(n not in OBJECTS for n in names):
@@ -86,7 +88,7 @@ def main():
         folder = args.output_root.resolve() / "graspgen" / name
         seed = int(asset["candidate_cache_seed"])
         key = dict(mesh_sha256=sha(asset["mesh_path"]), surface_sha256=sha(asset["surface_path"]),
-                   parts=asset["parts"], seed=seed, models=identity, points=2048, grasps=200,
+                   parts=asset["parts"], seed=seed, models=identity, points=2048, grasps=args.num_grasps,
                    geometry_source_sha256={p.name: sha(p) for p in (HERE / "runtime/geometry").glob("*.py")},
                    robot_sha256=sha(HERE / "runtime/robot/panda_v2.urdf"))
         report_path = folder / "REPORT.json"
@@ -114,7 +116,7 @@ def main():
         center = pc.mean(dim=0)
         centered = pc - center[None]
         data = dict(task="pick", inputs=torch.cat([centered, torch.zeros_like(centered)], dim=-1), points=centered)
-        sampler.model.grasp_generator.num_grasps_per_object = 200
+        sampler.model.grasp_generator.num_grasps_per_object = args.num_grasps
         torch.cuda.synchronize()
         started = time.perf_counter()
         with torch.inference_mode():
@@ -124,24 +126,26 @@ def main():
         raw = prediction["grasps_pred"][0].detach().cpu().numpy()
         scores = prediction["grasp_confidence"][0, :, 0].detach().cpu().numpy().astype(np.float32)
         center_np = center.cpu().numpy()
-        poses = restore_grasps(raw, center_np)
-        if scores.shape != (200,) or not np.isfinite(scores).all():
-            raise ValueError("Expected 200 finite discriminator scores")
-        ranks = np.empty(200, dtype=np.int32)
-        ranks[np.argsort(-scores, kind="stable")] = np.arange(1, 201, dtype=np.int32)
-        report = prepare_candidates(name, poses, scores, original_rank=ranks)
+        poses = restore_grasps(raw, center_np, args.num_grasps)
+        if scores.shape != (args.num_grasps,) or not np.isfinite(scores).all():
+            raise ValueError(f"Expected {args.num_grasps} finite discriminator scores")
+        ranks = np.empty(args.num_grasps, dtype=np.int32)
+        ranks[np.argsort(-scores, kind="stable")] = np.arange(1, args.num_grasps+1, dtype=np.int32)
+        report = prepare_candidates(name, poses, scores, original_rank=ranks,
+                                    max_candidates=args.num_grasps)
         folder.mkdir(parents=True, exist_ok=False)
         cache = folder / "candidates.npz"
         np.savez_compressed(cache, T_object_grasp=poses, score=scores, original_rank=ranks,
-                            generation_index=np.arange(200, dtype=np.int32), points_object=points,
+                            generation_index=np.arange(args.num_grasps, dtype=np.int32), points_object=points,
                             center_object=center_np, T_centered_grasp_raw=raw)
         report.update(source_kind="GraspGen official Panda diffusion + discriminator, mesh point cloud",
                       source_cache="candidates.npz", source_cache_sha256=sha(cache),
                       input_mesh_sha256=key["mesh_sha256"], cache_key=key,
                       generation_calls=1, generation_s=generation_s,
+                      model_candidates=args.num_grasps, source_candidates=args.num_grasps,
                       preprocess="2048 surface points, meters, mean subtracted and restored exactly once; fixed TCP adapter in geometry")
         write(report_path, report)
-        print(f"GENERATED {name}: 200 poses, {len(report['candidates'])} geometry-qualified; {folder}", flush=True)
+        print(f"GENERATED {name}: {args.num_grasps} poses, {len(report['candidates'])} geometry-qualified; {folder}", flush=True)
         if not report["candidates"]:
             raise RuntimeError(f"No geometry-qualified grasp for {name}; evidence retained, no automatic redraw")
 

@@ -449,6 +449,33 @@ def _contact_span(asset_id, tcp):
             'method': 'exposed analytic-union points inside exact pad footprint with opposing normals; geometric screening, not a force-closure proof'}
 
 
+def pad_normal_quality(object_id, tcp):
+    """Surface-normal alignment in the existing pad footprint, for ranking only.
+
+    The lower quartile on each side penalizes curved rim contacts where a
+    symmetric squeeze may eject the object. This is not force-closure proof.
+    """
+    _, points, normals = _cached_object(object_id)
+    tcp = np.asarray(tcp, dtype=float)
+    local = transform(points, np.linalg.inv(tcp))
+    normal = normals @ tcp[:3, :3]
+    footprint = ((np.abs(local[:, 0]) <= .00875) & (local[:, 2] >= -.009)
+                 & (local[:, 2] <= .0095) & (np.abs(local[:, 1]) <= .039))
+    sides = []
+    for sign in (1, -1):
+        selected = footprint & (sign*normal[:, 1] > .5) & (sign*local[:, 1] > 0)
+        alignment = sign*normal[selected, 1]
+        sides.append(dict(samples=int(selected.sum()),
+                          q25_normal_alignment=float(np.quantile(alignment, .25)) if len(alignment) else 0.))
+    friction = float(object_spec(object_id)['dynamic_friction'])
+    reference = 1./np.sqrt(1.+friction**2)
+    minimum = min(s['q25_normal_alignment'] for s in sides)
+    return dict(sides=sides, minimum_side_q25_normal_alignment=minimum,
+                friction_reference=friction, normal_alignment_reference=reference,
+                preferred=bool(minimum >= reference),
+                scope='Geometric ranking heuristic only; all original collision and physical checks required')
+
+
 def prepare_candidates(object_id, poses, scores, original_rank=None, max_candidates=200, generation_index=None):
     # Keep the complete single-call pool through object-only qualification.
     # The scene's fifty-candidate budget is applied after table/target checks.

@@ -2,8 +2,8 @@
 
 Input: qualified local grasp pool and an observed object transform.
 Output: local TCP poses, world grasp/pregrasp poses and explicit provenance.
-The candidate generator owns region priors. No object-specific target offset
-or pose is specified in this provider.
+Candidates come from GraspGen model inference. No object-specific target offset
+or handwritten grasp pose is specified in this provider.
 """
 from pathlib import Path
 import hashlib,json
@@ -16,15 +16,29 @@ def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def load_candidate_source(candidate_root,method,object_id):
+def source_limit(value=200):
+    if type(value) is not int or value not in (200,500,1000):
+        raise ValueError('source_candidate_limit must be200,500 or1000')
+    return value
+
+
+def load_candidate_source(candidate_root,method,object_id,maximum=200):
+    maximum=source_limit(maximum)
     folder=Path(candidate_root)/method/object_id
     path=folder/'REPORT.json'
     report=json.loads(path.read_text())
     if report['object_id']!=object_id:raise ValueError('Candidate/object identity mismatch')
+    if (report.get('source_kind')!='GraspGen official Panda diffusion + discriminator, mesh point cloud'
+            or report.get('generation_calls')!=1
+            or report.get('model_candidates',report.get('generated',0))!=report.get('generated')
+            or not report.get('generated',0)>0):
+        raise ValueError('Collection requires GraspGen model candidates; handwritten pools are not supported')
     cache=path.parent / report['source_cache']
     if sha(cache)!=report['source_cache_sha256']:raise ValueError('Candidate source changed')
     candidates=report['candidates']
-    if len(candidates)>200:raise ValueError('Candidate source exceeds the fixed single-call200-pose pool')
+    declared=report.get('source_candidates',report.get('generated',len(candidates)))
+    if type(declared) is not int or not len(candidates)<=declared<=maximum:
+        raise ValueError('Candidate source exceeds the configured source pool or has invalid provenance')
     for c in candidates:
         transform=np.asarray(c['T_object_tcp'],float)
         if transform.shape!=(4,4) or not np.isfinite(transform).all():raise ValueError('Invalid local target')
@@ -53,7 +67,7 @@ def world_targets(candidates,object_pose,approach_distance_m=.1):
 def screen_scene_candidates(candidates,scene,maximum=50):
     """Spend the scene budget only on fully collision-clear gripper sweeps.
 
-    The source pool is the original single200-pose model call. Optional
+    The source pool respects the explicitly configured single-call limit. Optional
     symmetry uses up to ``maximum`` scene-clear poses per near/far group.
     Source score order within each group, exact geometry and policy are kept.
     IK and full-arm path validation remain the planner's responsibility.
@@ -61,7 +75,8 @@ def screen_scene_candidates(candidates,scene,maximum=50):
     import time
     from planning_clearance import geometry_kwargs
     from geometry.api import OPENINGS_M,check_gripper_path
-    if len(candidates)>200:raise ValueError('Scene input exceeds the fixed200-pose source pool')
+    limit=source_limit(scene.get('source_candidate_limit',200))
+    if len(candidates)>limit:raise ValueError('Scene input exceeds the configured source pool')
     if not 1<=maximum<=50:raise ValueError('Scene-qualified candidate limit must be1..50')
     symmetry=grasp_symmetry.mode(scene.get('grasp_symmetry','off'))
     started=time.monotonic();obj=pose_matrix(scene['object_pose']);valid=[]
@@ -73,7 +88,8 @@ def screen_scene_candidates(candidates,scene,maximum=50):
         'scene_candidates_screened':0,'scene_candidate_limit':maximum*len(groups),
         'grasp_symmetry':symmetry,'orientation_candidates':sum(len(pool) for _,pool in groups),
         'scene_candidate_limit_per_group':maximum,'scene_groups':[],
-        'candidate_budget_policy':f'at most200 source poses; up to{maximum} scene-clear sweeps per orientation group; full planning budget shared across groups',
+        'source_candidate_limit':limit,
+        'candidate_budget_policy':f'at most{limit} source poses; up to{maximum} scene-clear sweeps per orientation group; full planning budget shared across groups',
         'rejections':[]}
     if symmetry=='near-first':
         report['symmetry_pairs']=[{
