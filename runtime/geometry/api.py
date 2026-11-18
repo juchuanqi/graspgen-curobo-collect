@@ -87,7 +87,12 @@ def _moving_hull(body_a, body_b):
 
 
 def _path_check(transforms, openings, objects, asset_id, table, allow_pad_contact, motion_slack, check_target_table,
-                relative_slack=None, target_slack=None, pad_penetration_m=.0005, obstacles=()):
+                relative_slack=None, target_slack=None, pad_penetration_m=.0005, obstacles=(),
+                table_clearance_m=.00005, obstacle_clearance_m=.00005):
+    table_clearance_m, obstacle_clearance_m = float(table_clearance_m), float(obstacle_clearance_m)
+    if not all(np.isfinite(v) and v >= .00005 for v in (table_clearance_m, obstacle_clearance_m)):
+        raise ValueError('World clearances must be finite and at least the existing50um floor')
+    clearance_report = dict(table_clearance_m=table_clearance_m, obstacle_clearance_m=obstacle_clearance_m)
     target_parts = _cached_object(asset_id)[0]
     table_body = primitive_convex(DEFAULT_TABLE if table is None else table) if table is not False else None
     obstacle_bodies = []
@@ -111,7 +116,8 @@ def _path_check(transforms, openings, objects, asset_id, table, allow_pad_contac
     def fail(reason, pair, segment, overlap, **extra):
         return {'valid': False, 'reason': reason, 'pair': pair, 'segment': int(segment),
                 'penetration_m': float(max(overlap, 0)), 'sat_axis_overlap_m': float(overlap),
-                'pair_checks': checks, 'allowed_pad_pairs': allowed, 'max_arc_cover_slack_m': maximum_slack, **extra}
+                'pair_checks': checks, 'allowed_pad_pairs': allowed, 'max_arc_cover_slack_m': maximum_slack,
+                **clearance_report, **extra}
     for k in range(max(1, count - 1)):
         j = min(k + 1, count - 1)
         slack = float(motion_slack[k]) if j != k else 0.
@@ -128,9 +134,10 @@ def _path_check(transforms, openings, objects, asset_id, table, allow_pad_contac
             for world_body in world_bodies:
                 checks += 1
                 hit, overlap = False, 0.
-                if near(body_a, body_b, world_body, slack + .00005):
+                margin = table_clearance_m if world_body is table_body else obstacle_clearance_m
+                if near(body_a, body_b, world_body, slack + margin):
                     swept_world = body_a if j == k else _moving_hull(body_a, body_b)
-                    hit, overlap = sat(swept_world, world_body, clearance=slack + .00005)
+                    hit, overlap = sat(swept_world, world_body, clearance=slack + margin)
                 if hit:
                     reason = 'robot_table_collision' if world_body is table_body else 'robot_obstacle_collision'
                     return fail(reason, [name, world_body.name or 'table'], k, overlap)
@@ -152,10 +159,10 @@ def _path_check(transforms, openings, objects, asset_id, table, allow_pad_contac
             for part in target_parts:
                 a, b = part.moved(objects[k]), part.moved(objects[j])
                 checks += 1
-                if not near(a, b, obstacle_body, obj_slack + .00005):
+                if not near(a, b, obstacle_body, obj_slack + obstacle_clearance_m):
                     continue
                 swept = a if j == k else _moving_hull(a, b)
-                hit, overlap = sat(swept, obstacle_body, clearance=obj_slack + .00005)
+                hit, overlap = sat(swept, obstacle_body, clearance=obj_slack + obstacle_clearance_m)
                 if hit:
                     return fail('object_obstacle_collision', [part.name, obstacle_body.name], k, overlap)
         if table_body is not None and check_target_table:
@@ -171,6 +178,7 @@ def _path_check(transforms, openings, objects, asset_id, table, allow_pad_contac
                 if hit and overlap > .0005 - obj_slack:
                     return fail('object_table_penetration', [part.name, 'table'], k, overlap)
     return {'valid': True, 'reason': 'geometry_clear', 'pair': None, 'pair_checks': checks,
+            **clearance_report,
             'allowed_pad_pairs': allowed, 'max_arc_cover_slack_m': maximum_slack,
             'obstacle_count': len(obstacle_bodies),
             'coverage': f'URDF collision STL convex hulls for arm/hand; exact URDF finger boxes, inward{pad_penetration_m*1000:g}mm rubber slab only allowed against target; complete target primitives, circumscribed cylinder64; table and obstacle boxes against all robot bodies and target; endpoint hull + second-derivative and curve-deviation bounds',
@@ -179,7 +187,8 @@ def _path_check(transforms, openings, objects, asset_id, table, allow_pad_contac
 
 
 def check_gripper_path(T_world_tcp, opening_m, object_pose, asset_id, table=None, allow_pad_contact=False,
-                       check_target_table=True, pad_penetration_m=.0005, obstacles=()):
+                       check_target_table=True, pad_penetration_m=.0005, obstacles=(),
+                       table_clearance_m=.00005, obstacle_clearance_m=.00005):
     started = time.monotonic()
     pad_penetration_m = pad_depth(pad_penetration_m)
     poses = np.asarray(T_world_tcp, float)
@@ -208,7 +217,8 @@ def check_gripper_path(T_world_tcp, opening_m, object_pose, asset_id, table=None
     else:
         slack = rel_slack = obj_slack = np.zeros(1)
     result = _path_check(transforms, openings, objects, asset_id, table, allow_pad_contact, slack, check_target_table,
-                         rel_slack, obj_slack, pad_penetration_m, obstacles)
+                         rel_slack, obj_slack, pad_penetration_m, obstacles,
+                         table_clearance_m, obstacle_clearance_m)
     result['interpolation'] = 'TCP translation linear and rotation SLERP; opening linear; object translation linear and rotation SLERP between each supplied sample'
     result.update(arm_checked=False, wall_s=time.monotonic() - started, pad_penetration_m=pad_penetration_m)
     return result
@@ -254,7 +264,8 @@ def _group_joint_path(q, openings, max_sum_dq=.012, max_curve_deviation_m=.00001
 
 def _check_robot_path_once(qpos, opening_m, object_pose, asset_id, base_pose=None, table=None,
                      allow_pad_contact=False, check_target_table=True, attached_to_tcp=None,
-                     compress=True, pad_penetration_m=.0005, obstacles=()):
+                     compress=True, pad_penetration_m=.0005, obstacles=(),
+                     table_clearance_m=.00005, obstacle_clearance_m=.00005):
     started = time.monotonic()
     pad_penetration_m = pad_depth(pad_penetration_m)
     q = np.asarray(qpos, float)
@@ -310,7 +321,8 @@ def _check_robot_path_once(qpos, opening_m, object_pose, asset_id, base_pose=Non
     else:
         slack = rel_slack = obj_slack = np.zeros(1)
     result = _path_check(transforms, openings, objects, asset_id, table, allow_pad_contact, slack, check_target_table,
-                         rel_slack, obj_slack, pad_penetration_m, obstacles)
+                         rel_slack, obj_slack, pad_penetration_m, obstacles,
+                         table_clearance_m, obstacle_clearance_m)
     result.update(arm_checked=True, wall_s=time.monotonic() - started, original_poses=original_n,
                   compressed_poses=n, max_joint_curve_deviation_cover_m=float(deviation.max(initial=0)),
                   finger_positions='actual independent qpos7/qpos8' if q.shape[1] == 9 else 'symmetric opening/2',
@@ -329,7 +341,8 @@ def _mid_pose(a, b):
 
 def check_robot_path(qpos, opening_m, object_pose, asset_id, base_pose=None, table=None,
                      allow_pad_contact=False, check_target_table=True, attached_to_tcp=None,
-                     compress=True, pad_penetration_m=.0005, adaptive=True, obstacles=()):
+                     compress=True, pad_penetration_m=.0005, adaptive=True, obstacles=(),
+                     table_clearance_m=.00005, obstacle_clearance_m=.00005):
     """Conservative continuous world-pair checking with bounded refinement.
 
     A conservative hull hit is refined only when both exact endpoint checks
@@ -346,7 +359,8 @@ def check_robot_path(qpos, opening_m, object_pose, asset_id, base_pose=None, tab
     depth = pad_depth(pad_penetration_m)
     params = dict(asset_id=asset_id, base_pose=base_pose, table=table,
                   allow_pad_contact=allow_pad_contact, check_target_table=check_target_table,
-                  attached_to_tcp=attached_to_tcp, pad_penetration_m=depth, obstacles=obstacles)
+                  attached_to_tcp=attached_to_tcp, pad_penetration_m=depth, obstacles=obstacles,
+                  table_clearance_m=table_clearance_m, obstacle_clearance_m=obstacle_clearance_m)
     stats = {'enabled': bool(adaptive), 'subdivisions': 0, 'restored_original_knots': 0,
              'maximum_depth_used': 0, 'endpoint_violations': 0, 'checker_calls': 0,
              'max_depth': 12, 'min_interval_fraction': 2. ** -12,

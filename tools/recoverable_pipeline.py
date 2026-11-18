@@ -54,6 +54,9 @@ class Pipeline:
         durable_write(self.output / 'PIPELINE.json', self.receipt)
 
     def check_inputs(self):
+        if self.receipt.get('initial_geometry_preflight_sha256'):
+            if digest(self.output / 'INITIAL_GEOMETRY_PREFLIGHT.json') != self.receipt['initial_geometry_preflight_sha256']:
+                raise ValueError('Registered initial geometry preflight changed')
         if 'source_manifest_sha256' in self.receipt:
             if digest(self.source / 'SOURCE.json') != self.receipt['source_manifest_sha256']:
                 raise ValueError('Frozen source manifest changed')
@@ -314,10 +317,10 @@ def main():
             if key not in {'output', 'resume'} and value is not None:
                 values[key] = str(value.resolve()) if isinstance(value, Path) else value
         objects = list(OBJECTS) if values['objects'] == 'all' else values['objects'].split(',')
-        collection_plan(objects, values['episodes_per_object'], values['workers'], values['seed'])
+        plan = collection_plan(objects, values['episodes_per_object'], values['workers'], values['seed'])
         if values['plan_json']:
             from coverage_plan import load_fixed_plan
-            load_fixed_plan(values['plan_json'], objects, values['episodes_per_object'], values['workers'], values['seed'])
+            plan = load_fixed_plan(values['plan_json'], objects, values['episodes_per_object'], values['workers'], values['seed'])
         tokens = gpu_tokens(values['gpus'])
         if values['workers'] > 1 and len(values['gpus'].split(',')) not in (4, 8):
             parser.error('Multiple workers require four or eight GPUs')
@@ -330,6 +333,9 @@ def main():
         runtime = Path(values['runtime']).resolve()
         if output == ROOT or output.is_relative_to(runtime) or output.is_relative_to(ROOT / 'tools'):
             parser.error('--output must be outside runtime and tools')
+        from initial_geometry import preflight
+        initial_geometry = preflight(plan, runtime, values['obstacle'],
+                                     interpreter(None, 'PLANNER_PYTHON'))
         values['lerobot_python'] = interpreter(values['lerobot_python'], 'LEROBOT_PYTHON')
         candidates = candidate_manifest(values['candidate_root'], objects)
         output.mkdir(parents=True, exist_ok=False)
@@ -338,10 +344,12 @@ def main():
                 shutil.copy2(values['plan_json'], output / 'FIXED_PLAN.json')
                 values['plan_json'] = str(output / 'FIXED_PLAN.json')
             source = freeze_source(ROOT, runtime, output / 'source')
+            durable_write(output / 'INITIAL_GEOMETRY_PREFLIGHT.json', initial_geometry)
             receipt = dict(protocol=1, run_id=uuid.uuid4().hex, created_unix_s=time.time(),
                 arguments=values, source_snapshot=str(source),
                 source_manifest_sha256=digest(source / 'SOURCE.json'), candidate_sha256=candidates,
                 objects=objects, stages=[], status='registered', data_status='not_started',
+                initial_geometry_preflight_sha256=digest(output / 'INITIAL_GEOMETRY_PREFLIGHT.json'),
                 training_status='not_requested' if values['data_only'] else 'not_started',
                 physical_grasp_retries=0, fixed_denominator=True)
             if values['plan_json']:

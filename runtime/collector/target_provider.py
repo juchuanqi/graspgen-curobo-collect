@@ -59,6 +59,7 @@ def screen_scene_candidates(candidates,scene,maximum=50):
     IK and full-arm path validation remain the planner's responsibility.
     """
     import time
+    from planning_clearance import geometry_kwargs
     from geometry.api import OPENINGS_M,check_gripper_path
     if len(candidates)>200:raise ValueError('Scene input exceeds the fixed200-pose source pool')
     if not 1<=maximum<=50:raise ValueError('Scene-qualified candidate limit must be1..50')
@@ -94,7 +95,8 @@ def screen_scene_candidates(candidates,scene,maximum=50):
             for opening in OPENINGS_M:
                 if opening<minimum:continue
                 check=check_gripper_path(np.stack((pre,grasp)),opening,obj,scene['object_id'],
-                                         allow_pad_contact=False, obstacles=scene.get('obstacles', []))
+                                         allow_pad_contact=False, obstacles=scene.get('obstacles', []),
+                                         **geometry_kwargs())
                 width_reports.append({'opening_m':opening,**check})
                 if check['valid']:chosen=opening;break
             candidate={**candidate,'scene_width_checks':width_reports}

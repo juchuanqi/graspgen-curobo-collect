@@ -408,7 +408,10 @@ with (a.output / 'launches').open('a') as stream:
                 if obstacle:
                     argv += ['--obstacle', obstacle]
                 # An ambient setting must not override the registered CLI/default.
-                with patch('recoverable_pipeline.ROOT', checkout), patch('sys.argv', argv), \
+                # Geometry has separate real-asset entrypoint regressions. This
+                # fixture intentionally contains no robot or object assets.
+                with patch('initial_geometry.preflight', return_value=dict(status='passed', cases=[])), \
+                        patch('recoverable_pipeline.ROOT', checkout), patch('sys.argv', argv), \
                         patch.dict(os.environ, {'ARM_SPEED_PROFILE': 'baseline' if expected == 'recommended' else 'recommended'}):
                     pipeline_main()
                 self.assertEqual(read(output / 'PIPELINE.json')['arguments']['arm_speed_profile'], expected)
