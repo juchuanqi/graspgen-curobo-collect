@@ -14,6 +14,7 @@ sys.path[:0]=[str(ROOT),str(ROOT/'runtime'),str(ROOT/'runtime/collector')]
 from generate_candidates import restore_grasps
 from geometry.api import prepare_candidates
 from target_provider import load_candidate_source, screen_scene_candidates, source_limit
+from tools.check_assets import check_candidates
 
 
 class SourceBudgetTests(unittest.TestCase):
@@ -56,6 +57,27 @@ class SourceBudgetTests(unittest.TestCase):
             with self.assertRaises(ValueError):source_limit(bad)
         with self.assertRaises(ValueError):screen_scene_candidates([{}]*201,{})
         with self.assertRaises(ValueError):screen_scene_candidates([],dict(source_candidate_limit=1000),maximum=51)
+
+    def test_asset_preflight_uses_runtime_source_limit(self):
+        from geometry.api import manifest
+        asset=manifest()['objects']['block55']
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);runtime=root/'runtime';(runtime/'config').mkdir(parents=True)
+            folder=root/'candidates/graspgen/block55';folder.mkdir(parents=True)
+            cache=folder/'candidates.npz';cache.write_bytes(b'candidate preflight fixture')
+            report=dict(object_id='block55',source_cache=cache.name,
+                source_cache_sha256=hashlib.sha256(cache.read_bytes()).hexdigest(),
+                source_kind='GraspGen official Panda diffusion + discriminator, mesh point cloud',
+                generation_calls=1,input_mesh_sha256=hashlib.sha256(Path(asset['mesh_path']).read_bytes()).hexdigest(),
+                cache_key=dict(surface_sha256=hashlib.sha256(Path(asset['surface_path']).read_bytes()).hexdigest(),parts=asset['parts']),
+                candidates=[dict(T_object_tcp=np.eye(4).tolist())])
+            config=runtime/'config/scene.json'
+            for count in (500,1000):
+                (folder/'REPORT.json').write_text(json.dumps({**report,'generated':count,'model_candidates':count}))
+                config.write_text('{}')
+                with self.assertRaises(ValueError):check_candidates(runtime,root/'candidates',['block55'])
+                config.write_text(json.dumps(dict(source_candidate_limit=count)))
+                self.assertEqual(check_candidates(runtime,root/'candidates',['block55'])['status'],'passed')
 
 
 if __name__=='__main__':unittest.main()

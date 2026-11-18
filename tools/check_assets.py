@@ -32,11 +32,13 @@ def check_candidates(runtime, candidate_root, objects):
     sys.path.insert(0, str(Path(runtime) / "collector"))
     from target_provider import load_candidate_source
     from geometry.api import manifest
+    config = json.loads((Path(runtime) / 'config/scene.json').read_text())
+    maximum = config.get('source_candidate_limit', 200)
     for name in objects:
         folder = Path(candidate_root) / "graspgen" / name
         if not (folder / "REPORT.json").is_file():
             raise FileNotFoundError(f"No GraspGen pool for {name}. Run: bash run.sh prepare --objects {name}")
-        candidates, provenance = load_candidate_source(candidate_root, "graspgen", name)
+        candidates, provenance = load_candidate_source(candidate_root, "graspgen", name, maximum=maximum)
         report = provenance["geometry_report"]
         asset = manifest()["objects"][name]
         if report.get("input_mesh_sha256") != sha(asset["mesh_path"]):
