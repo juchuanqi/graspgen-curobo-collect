@@ -2,8 +2,8 @@
 
 Input: qualified local grasp pool and an observed object transform.
 Output: local TCP poses, world grasp/pregrasp poses and explicit provenance.
-The candidate generator owns region priors. No object-specific target offset
-or pose is specified in this provider.
+Candidates come from GraspGen model inference. No object-specific target offset
+or handwritten grasp pose is specified in this provider.
 """
 from pathlib import Path
 import hashlib,json
@@ -28,6 +28,11 @@ def load_candidate_source(candidate_root,method,object_id,maximum=200):
     path=folder/'REPORT.json'
     report=json.loads(path.read_text())
     if report['object_id']!=object_id:raise ValueError('Candidate/object identity mismatch')
+    if (report.get('source_kind')!='GraspGen official Panda diffusion + discriminator, mesh point cloud'
+            or report.get('generation_calls')!=1
+            or report.get('model_candidates',report.get('generated',0))!=report.get('generated')
+            or not report.get('generated',0)>0):
+        raise ValueError('Collection requires GraspGen model candidates; handwritten pools are not supported')
     cache=path.parent / report['source_cache']
     if sha(cache)!=report['source_cache_sha256']:raise ValueError('Candidate source changed')
     candidates=report['candidates']

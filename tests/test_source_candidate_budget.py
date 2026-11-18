@@ -42,7 +42,8 @@ class SourceBudgetTests(unittest.TestCase):
             root=Path(temporary);folder=root/'graspgen/test';folder.mkdir(parents=True)
             cache=folder/'candidates.npz';cache.write_bytes(b'fixed test cache')
             report=dict(object_id='test',source_cache=cache.name,source_cache_sha256=hashlib.sha256(cache.read_bytes()).hexdigest(),
-                        source_kind='official test source',generated=1000,candidates=[dict(T_object_tcp=np.eye(4).tolist())])
+                        source_kind='GraspGen official Panda diffusion + discriminator, mesh point cloud',
+                        generation_calls=1,generated=1000,candidates=[dict(T_object_tcp=np.eye(4).tolist())])
             (folder/'REPORT.json').write_text(json.dumps(report))
             with self.assertRaises(ValueError):load_candidate_source(root,'graspgen','test')
             with self.assertRaises(ValueError):load_candidate_source(root,'graspgen','test',500)
