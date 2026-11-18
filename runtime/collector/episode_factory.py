@@ -75,7 +75,7 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
 
         def scene(self):
             mode = "wall" if getattr(env, "scenario", "clear") == "wall" else "none"
-            return {'object_id': entry['object_id'], 'urdf_path': str(URDF), 'joint_names': NAMES, 'qpos': self.row['qpos'].tolist(), 'tcp_pose': self.row['tcp_pose'].tolist(), 'base_pose': env.robot.data.root_link_pose_w[0].cpu().numpy().tolist(), 'table_pose': [0.495, 0.0, -0.025, 1.0, 0.0, 0.0, 0.0], 'table_shape_local_pose': [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], 'table_shape_half_size': [0.6, 0.6, 0.025], 'object_pose': self.row['object_pose'].tolist(), 'object_parts': asset['parts'], 'object_size_m': asset['size_m'], 'obstacles': planner_obstacles(mode), 'obstacle_mode': mode, 'endpoint_screening': bool(TRANSFER.get('endpoint_screening', False)), 'contact_quality_ranking': bool(TRANSFER.get('contact_quality_ranking', False))}
+            return {'object_id': entry['object_id'], 'urdf_path': str(URDF), 'joint_names': NAMES, 'qpos': self.row['qpos'].tolist(), 'tcp_pose': self.row['tcp_pose'].tolist(), 'base_pose': env.robot.data.root_link_pose_w[0].cpu().numpy().tolist(), 'table_pose': [0.495, 0.0, -0.025, 1.0, 0.0, 0.0, 0.0], 'table_shape_local_pose': [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], 'table_shape_half_size': [0.6, 0.6, 0.025], 'object_pose': self.row['object_pose'].tolist(), 'object_parts': asset['parts'], 'object_size_m': asset['size_m'], 'obstacles': planner_obstacles(mode), 'obstacle_mode': mode, 'endpoint_screening': bool(TRANSFER.get('endpoint_screening', False)), 'contact_quality_ranking': bool(TRANSFER.get('contact_quality_ranking', False)), 'source_candidate_limit': TRANSFER.get('source_candidate_limit',200)}
 
         def status(self, state):
             write(args.output / 'STATUS.json', {'state': state, 'case_id': entry['case_id'], 'method': args.method, 'actions': len(self.actions), 'wall_s': time.monotonic() - self.started, 'reason': self.reason})
@@ -205,7 +205,8 @@ def create_episode(env, entry, asset, args, casegrid, planner, process_started, 
 
         def load_candidates(self):
             started = time.monotonic()
-            candidates, provenance = load_candidate_source(args.candidate_root, args.method, entry['object_id'])
+            candidates, provenance = load_candidate_source(args.candidate_root, args.method, entry['object_id'],
+                maximum=TRANSFER.get('source_candidate_limit',200))
             self.candidate_provenance = provenance
             write(args.output / 'CANDIDATE_SOURCE.json', provenance)
             self.timing['candidate_load'] = time.monotonic() - started
