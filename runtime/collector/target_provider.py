@@ -52,7 +52,8 @@ def load_candidate_source(candidate_root,method,object_id,maximum=200):
     return candidates,provenance
 
 
-def world_targets(candidates,object_pose,approach_distance_m=.1):
+def world_targets(candidates,object_pose,approach_distance_m=.05):
+    """Place the pregrasp 5 cm behind the grasp along its approach axis by default."""
     obj=pose_matrix(object_pose)
     if not np.isfinite(obj).all():raise ValueError('Nonfinite observed object pose')
     if not 0<approach_distance_m<=.3:raise ValueError('Invalid approach distance')
