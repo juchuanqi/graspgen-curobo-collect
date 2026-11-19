@@ -8,11 +8,10 @@
 
 ## 1. 拉取代码并选择环境路线
 
-代码位于 [juchuanqi/graspgen-curobo-collect](https://github.com/juchuanqi/graspgen-curobo-collect/tree/beijing-d-collect) 的 `beijing-d-collect` 分支。直接克隆：
+代码位于 [juchuanqi/graspgen-curobo-collect](https://github.com/juchuanqi/graspgen-curobo-collect)，当前默认分支为 `beijing-d-collect`。直接克隆默认分支：
 
 ```bash
-git clone --branch beijing-d-collect --single-branch \
-  https://github.com/juchuanqi/graspgen-curobo-collect.git
+git clone https://github.com/juchuanqi/graspgen-curobo-collect.git
 cd graspgen-curobo-collect
 git rev-parse HEAD
 ```

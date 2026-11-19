@@ -1,5 +1,7 @@
 # 代码入口与扩展
 
+当前 Isaac 管线的进程分工、回合时序、结果文件和故障定位见 [ISAAC_PIPELINE.md](ISAAC_PIPELINE.md)；以下按源码模块索引。
+
 | 路径 | 用途 |
 |---|---|
 | `cli.py` / `run.sh` | 选择准备、采集、预检、测速、导出和完整数据管线入口及对应解释器 |
@@ -16,6 +18,7 @@
 | `runtime/collector/fast_env_v3.py` 至 `fast_env_v6.py` | 逐层接入传感器环形调度、接触 Graph、相机调度和执行器 Graph；普通采集默认 accelerated 使用 v6 |
 | `runtime/collector/overlap.py` | 闭合状态几何检查与 lift RPC 并行，二者通过后才允许执行 |
 | `runtime/collector/generic_planner.py` | cuRobo 与完整目标、桌面、夹爪、机械臂检查 |
+| `runtime/collector/target_provider.py` | 官方候选来源核验、TCP 世界变换、5 cm 接近和场景几何预筛 |
 | `runtime/collector/planning_clearance.py` | 规划路径的桌面 1 mm、障碍物 6 mm 余量，由 cuRobo 世界和完整几何扫掠共同使用 |
 | `runtime/collector/arm_speed.py` | 可选分阶段速度、路径重定时、记录配置及离线动作上限检查 |
 | `runtime/collector/grasp_symmetry.py` | TCP 局部 Z 轴 180° 配对、当前世界朝向夹角、近向/远向分组及来源记录 |
@@ -52,6 +55,8 @@
 4. 为新物体生成 GraspGen 候选，执行初态/碰撞/接触和数据完整性回归。
 
 本版本交付范围为四物品抓取采集、后处理校验与数据交付；`pipeline --data-only` 结束于数据验收。新物体、额外障碍或不同机器人需要相应开发和实际验证。
+
+当前配置与物理证据见 [BASELINE.md](BASELINE.md)。CPU 开发检查使用 `requirements-test.txt` 和 `python -B -m unittest discover -s tests -v`，无需安装 GPU 环境；依赖 cuRobo 或 LeRobot 的测试在对应环境运行。PR 的 CPU 工作流同时检查资产、shell 语法及源码打包，不替代物理 smoke。
 
 `runtime/collector/linear_motion_score.py` 统一采集与重放使用的 COM 平移/转角评分；`static_state.py` 校验原有落稳过程中的末尾 0.5 秒证据。`tools/lerobot_export/` 负责默认严格筛选、原生 v3 导出、完整读取及 ACT 训练检查；`tools/pipeline.py` 串起本地验收各阶段并保存阶段日志。
 

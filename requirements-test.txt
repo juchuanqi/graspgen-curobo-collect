@@ -1,0 +1,4 @@
+# CPU geometry, scheduling, recovery and data-selection regressions; no CUDA stack.
+numpy==1.26.4
+scipy==1.17.1
+trimesh==5.0.0

@@ -1,6 +1,6 @@
 # 独立机器安装
 
-当前运行栈为 Linux x86_64、NVIDIA CUDA GPU、Python 3.11、Isaac Sim 5.1.0 / Isaac Lab 2.3.0、cuRobo 0.7.8 和官方 GraspGen Panda 模型。Windows/macOS 未作为本项目运行平台验证；Windows 电脑可连接可运行 Isaac 的 Linux 工作站。需要 NVIDIA 驱动、Vulkan、对应 CUDA 编译工具和 C++ 编译器。共享环境已经安装好时，优先使用根目录 README 的共享盘入口。
+当前运行栈为 Linux x86_64、NVIDIA CUDA GPU、Python 3.11、Isaac Sim 5.1.0 / Isaac Lab 2.3.0、cuRobo 0.7.8 和官方 GraspGen Panda 模型。Windows/macOS 未作为本项目运行平台验证；Windows 电脑可连接可运行 Isaac 的 Linux 工作站。需要 NVIDIA 驱动、Vulkan、对应 CUDA 编译工具和 C++ 编译器。共享环境已经安装好时，使用[北京 D 共享环境入口](REPRODUCE.md#2-北京-d复用已经准备的共享环境)。
 
 三个 Python 环境分开，避免 Isaac 自带 PyTorch 与规划/推理依赖互相替换。启动器本身只用 Python 标准库，项目路径允许包含空格。
 
@@ -75,3 +75,7 @@ bash run.sh collect --smoke --gpus 0
 `check` 只检查文件与 CPU 依赖，不启动 Isaac 或 CUDA 计算。`prepare` 真正运行 GraspGen，一物品一次 200 候选，再按相同几何规则筛选；`collect` 真正启动 cuRobo 与 Isaac。已有候选的输入 mesh、模型、代码与哈希相同才复用；不同或不完整的目录会报错并保留，需要用新的 `--output-root`。自定义候选目录采集时通过 `--candidate-root` 指向同一位置。
 
 运行缓存默认集中在本库 `.cache/`，可用 `COLLECT_CACHE_DIR` 调整；`TORCH_EXTENSIONS_DIR`、`CUDA_CACHE_PATH`、`TRITON_CACHE_DIR`、`XDG_CACHE_HOME`、`TMPDIR` 的显式设置仍优先。第三方 Isaac/Kit 也可能写自己的用户配置目录。
+
+## 5. 数据导出环境
+
+采集所需的是上面的三套环境；导出 LeRobot v3 时另建 Python 3.11 环境并安装 `requirements-lerobot.txt`。安装命令、`LEROBOT_PYTHON`、并行分片及完整读回步骤见[数据导出说明](LEROBOT.md)。准备好候选并通过 smoke 后，可运行 `pipeline --data-only` 完成新批次采集与交付，或用 `export` 处理已有原始批次。
