@@ -14,7 +14,7 @@ LOCAL_ONLY = {"outputs", "generated", "models", "local_env.json", ".env"}
 def source_files():
     for folder, directories, filenames in os.walk(ROOT):
         base = Path(folder)
-        directories[:] = sorted(d for d in directories if d not in EXCLUDE and
+        directories[:] = sorted(d for d in directories if d not in EXCLUDE and not d.startswith(".venv") and
                                 not d.endswith(".egg-info") and not (base == ROOT and d in LOCAL_ONLY))
         for name in sorted(filenames):
             path = base / name

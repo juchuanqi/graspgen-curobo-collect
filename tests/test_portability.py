@@ -193,6 +193,19 @@ class PortabilityTests(unittest.TestCase):
                 paths = {str(relative) for _, relative in source_files()}
             self.assertEqual(paths, {'cli.py'})
 
+    def test_archive_excludes_named_virtual_environments_without_following_symlinks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'cli.py').write_text('print("source")\n')
+            for name in ('.venv', '.venv-lerobot', '.venv-cpu'):
+                environment = root / name
+                environment.mkdir()
+                (environment / 'pyvenv.cfg').write_text('local environment\n')
+                (environment / 'python').symlink_to(sys.executable)
+            with patch('tools.package.ROOT', root):
+                paths = {str(relative) for _, relative in source_files()}
+            self.assertEqual(paths, {'cli.py'})
+
     def test_delivery_has_no_recordings_or_machine_paths(self):
         files = list(source_files())
         self.assertTrue(files)

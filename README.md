@@ -4,15 +4,26 @@ Panda 已知物体 mesh 抓取数采：官方 GraspGen 生成候选，cuRobo 规
 
 当前交付范围为**抓取 → 抬升 → 稳持 → 数据验收**。输入使用已知 mesh 和仿真真实位姿；四类内置物体为方块、细长条、圆柱、圆盘。默认直线接近 **5 cm**，支持固定挡板避障。
 
+运行平台为 Linux x86_64 + NVIDIA GPU；当前验证栈为 Isaac Sim 5.1.0 / Isaac Lab 2.3.0、cuRobo 0.7.8 和 Python 3.11。GraspGen、仿真、规划和 LeRobot 使用独立环境。权重、环境与候选需要在目标机器准备，目标机器先通过两条 smoke 再运行批量采集。
+
 ## 快速开始
 
 ```bash
-git clone --branch beijing-d-collect --single-branch \
-  https://github.com/juchuanqi/graspgen-curobo-collect.git
+git clone https://github.com/juchuanqi/graspgen-curobo-collect.git
 cd graspgen-curobo-collect
+git rev-parse HEAD
+```
 
-# 北京 D 共享环境；其他机器先按 docs/INSTALL.md 安装并配置 local_env.json。
-python3 -B tools/configure_shared.py --shared-root /mnt/public/juchuanqi
+当前默认分支为 `beijing-d-collect`，请记录提交号用于复现。按机器选择准备路线：
+
+| 环境 | 准备步骤 |
+|---|---|
+| 独立 Linux 工作站 / 新集群 | 按[独立安装](docs/INSTALL.md)安装三套运行环境与权重，复制 `local_env.example.json` 为 `local_env.json` 并填入本机绝对路径 |
+| 北京 D 或挂载了原共享依赖的机器 | 按[共享环境复现](docs/REPRODUCE.md#2-北京-d复用已经准备的共享环境)绑定现有环境和验证权重；个人路径仅用于该环境 |
+
+两条路线准备完成后，都在仓库根目录执行：
+
+```bash
 bash run.sh check --gpus 0
 
 # 首先准备方块候选，并做两条物理和原始数据验收。
@@ -24,7 +35,16 @@ bash run.sh prepare --objects all --gpu 0
 bash run.sh collect --objects all --episodes-per-object 5 --gpus 0
 ```
 
-候选默认每物体 200 个；显式使用 500／1000 见[候选数量](docs/CANDIDATE_COUNT.md)。`check` 只做文件和 CPU 依赖预检；`prepare`、`collect` 真正使用 GPU。目标机器必须先通过 smoke。
+候选默认每物体 200 个；显式使用 500／1000 见[候选数量](docs/CANDIDATE_COUNT.md)，准备与采集须使用同一个候选根目录。`check` 只做文件和 CPU 依赖预检；`prepare`、`collect` 真正使用 GPU。
+
+多卡编号为当前 `CUDA_VISIBLE_DEVICES` 内的逻辑编号。四卡最多 3 个仿真 worker，共享第 4 张卡上的规划器；八卡最多 8 个 worker，每卡一个仿真及专属规划器。例如：
+
+```bash
+bash run.sh collect --objects all --episodes-per-object 5 \
+  --gpus 0,1,2,3 --workers 3
+```
+
+单卡与双卡布局、显存和启动排查见[管线说明](docs/ISAAC_PIPELINE.md#入口与进程职责)。
 
 ## 采集与交付
 
@@ -36,19 +56,27 @@ bash run.sh collect --objects all --episodes-per-object 5 --gpus 0
 | `bash run.sh COMMAND --help` | 各入口参数；查看帮助不需要 GPU 环境 |
 
 ```bash
-# 需要独立 LeRobot 0.4.4 环境；输出目录须为新的绝对路径。
-bash run.sh pipeline --data-only --output /data/new_batch --gpus 0 \
+# 独立 LeRobot 0.4.4 环境；只安装一次，勿混入仿真/规划环境。
+python3.11 -m venv .venv-lerobot
+.venv-lerobot/bin/python -m pip install -r requirements-lerobot.txt
+export LEROBOT_PYTHON="$PWD/.venv-lerobot/bin/python"
+
+# 另起新批次，串联采集和数据交付；输出目录事先不能存在。
+bash run.sh pipeline --data-only --output "$PWD/outputs/new_batch" --gpus 0 \
   --objects all --episodes-per-object 5 \
-  --candidate-root "$PWD/generated/candidates" \
-  --lerobot-python /your/lerobot-venv/bin/python
+  --candidate-root "$PWD/generated/candidates"
 
 # 按原登记配置恢复；保留已执行槽位，不自动补抓失败案例。
-bash run.sh pipeline --data-only --output /data/new_batch --resume
+bash run.sh pipeline --data-only --output "$PWD/outputs/new_batch" --resume
 ```
+
+已有 `collect` 原始批次用 `export --run <原始目录>`，无需再次采集。新 pipeline 可加 `--export-workers 4` 按物体并行生成 LeRobot 分片；独立 export 对应 `--workers 4`。仿真并发与导出并发分别配置，默认导出为单包。分片路径及联合读取见[导出说明](docs/LEROBOT.md)。
 
 `pipeline` 请显式带 `--data-only`；兼容入口省略该参数仍会执行历史 ACT 读取检查。训练由下游单独负责。
 
 默认输出 `outputs/<时间戳>/`；`collect` 目录含 `REPORT.md`、`SUMMARY.json`、逐回合 `trajectory.npz`、双路 `cameras/*.npy` 及验证回执。`pipeline` 将原始数据放在 `raw/`，导出与读回放在 `export/`，并冻结本次源码。N 个动作对应 N+1 帧观测；双 256×256 RGB、60 Hz 控制、480 Hz 物理、每控制间隔 8 子步接触记录。
+
+验收时分别查看 `raw/RUN.json` 的槽位完成状态、`raw/SLOTS.json` 的成功/失败分类，以及 `export/SELECTION.json`、`export/AUDIT.json` 和 `export/COMMITTED.json` 的数据筛选、完整读回与封存。计划执行完成不代表全部抓取成功；原始成功数与最终合格导出数也可能因去重而不同。
 
 | 配置 | `collect` 默认 | 新 `pipeline` 默认 |
 |---|---|---|
@@ -71,12 +99,12 @@ bash run.sh pipeline --data-only --output /data/new_batch --resume
 
 ```bash
 # 独立 CPU 测试环境，无需安装 Isaac / GraspGen / cuRobo。
-python3.11 -m venv /your/cpu-test-env
-/your/cpu-test-env/bin/python -m pip install -r requirements-test.txt
-/your/cpu-test-env/bin/python -B -m unittest discover -s tests -v
+python3.11 -m venv .venv-cpu
+.venv-cpu/bin/python -m pip install -r requirements-test.txt
+.venv-cpu/bin/python -B -m unittest discover -s tests -v
 
-# 源码交付包排除权重、候选、原始记录、日志和 local_env.json。
-python3 -B tools/package.py --output /data/graspgen_curobo_collect.tar.gz
+# 源码交付包排除 .venv*、权重、候选、原始记录、日志和 local_env.json。
+python3 -B tools/package.py --output ../graspgen_curobo_collect-source.tar.gz
 ```
 
 CPU CI 自动执行几何、初态、数据筛选、恢复、调度及入口回归；cuRobo 专属和 LeRobot 专属测试需要各自环境，GPU 测试还需显式启用。
