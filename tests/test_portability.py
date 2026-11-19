@@ -181,10 +181,23 @@ class PortabilityTests(unittest.TestCase):
                 processes.close()
             self.assertTrue(all(child.poll() is not None for child in processes.children))
 
+    def test_archive_excludes_worktree_git_pointer_and_local_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / '.git').write_text('gitdir: /private/worktree/metadata\n')
+            (root / 'local_env.json').write_text('{}')
+            (root / 'cli.py').write_text('print("source")\n')
+            (root / 'outputs').mkdir()
+            (root / 'outputs/trajectory.npz').write_bytes(b'raw')
+            with patch('tools.package.ROOT', root):
+                paths = {str(relative) for _, relative in source_files()}
+            self.assertEqual(paths, {'cli.py'})
+
     def test_delivery_has_no_recordings_or_machine_paths(self):
         files = list(source_files())
         self.assertTrue(files)
         paths = {str(relative) for _, relative in files}
+        self.assertNotIn('.git', paths)
         self.assertIn("third_party/GraspGen/grasp_gen/models/grasp_gen.py", paths)
         self.assertIn("third_party/GraspGen/pointnet2_ops/pointnet2_ops/_ext-src/src/sampling_gpu.cu", paths)
         self.assertIn("third_party/GraspGen/assets/panda_gripper/hand.stl", paths)

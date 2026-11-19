@@ -1,4 +1,5 @@
 """Collision regressions: wall checks must cover fingers, paths and held objects."""
+import importlib.util
 from pathlib import Path
 import sys
 import tempfile
@@ -84,6 +85,7 @@ class ObstacleGeometryTests(unittest.TestCase):
         checks = report['rejections'][0]['scene_width_checks']
         self.assertTrue(all(c['reason'] == 'robot_obstacle_collision' for c in checks))
 
+    @unittest.skipUnless(importlib.util.find_spec("curobo") is not None, "requires the cuRobo planning environment")
     def test_planner_world_and_final_path_check_keep_wall_during_carry(self):
         from generic_planner import Planner
         planner = Planner.__new__(Planner)

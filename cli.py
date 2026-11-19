@@ -1,5 +1,6 @@
 """Small standard-library launcher for separate simulation, planning and model environments."""
 from __future__ import annotations
+import argparse
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,33 @@ import sys
 
 from common import HERE, local_setting
 from collect import environment, interpreter
+
+COMMANDS = {
+    "collect": "Collect raw episodes and validate them",
+    "prepare": "Generate official GraspGen candidate pools",
+    "check": "Check local environments, model files and assets",
+    "export": "Export validated episodes and audit LeRobot data",
+    "pipeline": "Run recoverable collection and export (use --data-only for data delivery)",
+    "download-models": "Download or verify official model weights",
+    "benchmark": "Run the historical cold/warm/parallel benchmark",
+}
+
+
+def command_arguments(values):
+    """Keep legacy collection flags while exposing the available commands."""
+    parser = argparse.ArgumentParser(
+        prog="bash run.sh", description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Commands:\n" + "\n".join(f"  {name:17} {description}" for name, description in COMMANDS.items())
+        + "\n\nUse bash run.sh COMMAND --help for command options."
+        + "\nWithout a command, collection flags retain their original meaning.")
+    if values and values[0] in {"-h", "--help"}:
+        parser.parse_args(values)
+    if values and not values[0].startswith("-"):
+        if values[0] not in COMMANDS:
+            parser.error(f"unknown command: {values[0]!r}")
+        return values[0], values[1:]
+    return "collect", list(values)
 
 
 def graspgen_check(python):
@@ -51,8 +79,8 @@ sys.exit(bool(missing) or bool(missing_files) or bool(import_error))
 
 
 def main():
-    values = sys.argv[1:]
-    command = values.pop(0) if values and values[0] in {"collect", "prepare", "check", "benchmark", "download-models", "export", "pipeline"} else "collect"
+    command, values = command_arguments(sys.argv[1:])
+    help_requested = any(value in {"-h", "--help"} for value in values)
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
     if command in {"export", "pipeline"}:
         script = HERE / "tools" / ("lerobot_export/run.py" if command == "export" else "pipeline.py")
@@ -61,11 +89,12 @@ def main():
         env = environment(os.environ.get("CUDA_VISIBLE_DEVICES", ""), HERE)
         if "CUDA_VISIBLE_DEVICES" not in os.environ:
             env.pop("CUDA_VISIBLE_DEVICES", None)
-        python = interpreter(None, "GRASPGEN_PYTHON")
+        python = sys.executable if help_requested else interpreter(None, "GRASPGEN_PYTHON")
         script = HERE / ("generate_candidates.py" if command == "prepare" else "tools/download_models.py")
         os.execve(python, [python, "-B", "-u", str(script), *values], env)
     if command == "check":
-        graspgen_check(interpreter(None, "GRASPGEN_PYTHON"))
+        if not help_requested:
+            graspgen_check(interpreter(None, "GRASPGEN_PYTHON"))
         values.insert(0, "--check")
     if command == "benchmark":
         values.insert(0, "--benchmark")

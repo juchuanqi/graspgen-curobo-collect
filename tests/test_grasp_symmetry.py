@@ -1,5 +1,6 @@
 """CPU checks for pose pairing, collision screening and planner fallback."""
 import copy
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
@@ -141,6 +142,7 @@ class GraspSymmetryTests(unittest.TestCase):
             self.assertEqual(episode_options(None, None, job, 0).grasp_symmetry, selected)
 
 
+@unittest.skipUnless(importlib.util.find_spec("curobo") is not None, "requires the cuRobo planning environment")
 class PlannerSymmetryTests(unittest.TestCase):
     """Exercise the real select loop with CPU doubles for GPU operations."""
 

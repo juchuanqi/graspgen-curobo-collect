@@ -19,7 +19,7 @@ def source_files():
         for name in sorted(filenames):
             path = base / name
             relative = path.relative_to(ROOT)
-            if base == ROOT and name in LOCAL_ONLY:
+            if name in EXCLUDE or (base == ROOT and name in LOCAL_ONLY):
                 continue
             if path.suffix in {".log", ".pyc", ".so", ".o", ".mp4", ".tar", ".gz"}:
                 continue
