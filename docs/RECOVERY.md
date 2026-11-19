@@ -2,14 +2,16 @@
 
 新入口为每个预定槽位保存 `raw/SLOTS.json`。普通 `collect` 和 `pipeline` 使用恢复协议；旧 `--benchmark`、`--smoke` 入口保持原调度。旧验收目录不带该协议，不能直接使用新入口恢复，也不会迁移或重写旧标签。
 
+当前数据交付使用 `pipeline --data-only`，结束于严格导出、官方完整读回及独立统计验收。省略此参数的新批次仍兼容历史 ACT 检查流程；需要时可显式用 `--with-training`。进程与结果文件索引见 [Isaac 数采管线](ISAAC_PIPELINE.md)。
+
 ```bash
-# 四物体各一条，使用已有加速档位，完成严格数据交付及100步ACT检查。
-bash run.sh pipeline --output /absolute/new-run --gpus 0,1 --workers 1 \
+# 四物体各一条，使用已有加速档位，完成严格数据交付。
+bash run.sh pipeline --data-only --output /absolute/new-run --gpus 0,1 --workers 1 \
   --episodes-per-object 1 --arm-speed-profile recommended --candidate-root /absolute/candidates \
   --lerobot-python /path/to/lerobot/python
 
 # 使用原来冻结的代码、配置和槽位，继续同一批次。
-bash run.sh pipeline --output /absolute/new-run --resume
+bash run.sh pipeline --data-only --output /absolute/new-run --resume
 
 # 只交付经过完整读回和独立统计复算的数据包。
 bash run.sh pipeline --output /absolute/new-data-run --data-only \
@@ -23,13 +25,13 @@ bash run.sh pipeline --output /absolute/new-sharded-run --export-workers 4 --dat
 bash run.sh pipeline --output /absolute/new-data-run --resume --with-training
 
 # 八卡加速：每卡一个仿真及专属规划器，四物体各32条。
-bash run.sh pipeline --output /absolute/new-eight-gpu-run \
+bash run.sh pipeline --data-only --output /absolute/new-eight-gpu-run \
   --gpus 0,1,2,3,4,5,6,7 --workers 8 --episodes-per-object 32 \
   --execution-profile accelerated --arm-speed-profile recommended \
   --candidate-root /absolute/candidates --lerobot-python /path/to/lerobot/python
 ```
 
-新 `pipeline` 批次默认使用已有 `recommended` 加速档位：接近 1.0 rad/s、持物抬升 0.3 rad/s，路径进度加速度分别为 5.0、2.0 rad/s²；下降、离桌、闭合、保持及质量规则沿用原实现。速度选择登记在 `PIPELINE.json` 并传给冻结采集子进程。需要原速对照时显式使用 `--arm-speed-profile baseline`。P2四物体正式复测125/128成功，热身后含验证7.650秒/成功条，完整采集9.558秒/成功条，含导出与完整读回的数据活跃成本41.13秒/合格条；有限固定设计及细长物体135°失败见 [README](../README.md)。历史提速验收及圆盘失败记录继续保留。
+新 `pipeline` 批次默认使用已有 `recommended` 加速档位：接近 1.0 rad/s、持物抬升 0.3 rad/s，路径进度加速度分别为 5.0、2.0 rad/s²；下降、离桌、闭合、保持及质量规则沿用原实现。速度选择登记在 `PIPELINE.json` 并传给冻结采集子进程。需要原速对照时显式使用 `--arm-speed-profile baseline`。P2四物体正式复测125/128成功，热身后含验证7.650秒/成功条，完整采集9.558秒/成功条，含导出与完整读回的数据活跃成本41.13秒/合格条；有限固定设计及细长物体135°失败见[历史版本记录](https://github.com/juchuanqi/graspgen-curobo-collect/blob/73c6c31b2591dc6488608cee2f99c9c4566e1f18/README.md)。历史提速验收及圆盘失败记录继续保留。
 
 恢复时省略原采集参数即可；如再次传入，则必须与登记值一致，包括速度档位。旧批次继续使用其冻结源码和原速度，不受新默认值影响。允许切换是否执行训练检查及本次调度的检查点限制。GPU和并发配置固定，调整资源需要另建批次。独立 `collect --resume` 需传原计划参数，包括物体、槽位数、种子、速度及候选路径，并指定原 `--output`。
 

@@ -85,6 +85,7 @@ CPU CI 自动执行几何、初态、数据筛选、恢复、调度及入口回�
 |---|---|
 | [复现手册](docs/REPRODUCE.md) / [独立安装](docs/INSTALL.md) | 共享环境、新机器安装、smoke、资源排查 |
 | [代码与扩展](docs/CODE.md) | 模块职责、坐标约定、新物品注册 |
+| [Isaac 数采管线](docs/ISAAC_PIPELINE.md) | 进程分工、回合执行顺序、结果文件和故障定位 |
 | [当前基线](docs/BASELINE.md) | 配置、物理验收、已验证范围、保留问题 |
 | [恢复与固定初态](docs/RECOVERY.md) | 槽位账本、检查点、源码冻结、恢复边界 |
 | [数据格式与导出](docs/LEROBOT.md) | 严格筛选、单包／分片、官方读回 |
